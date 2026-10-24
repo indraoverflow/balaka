@@ -78,7 +78,7 @@ public class SetupController {
         // Load seed pack first — if classpath resources are missing, fail before
         // creating the admin user so the wizard can be retried.
         byte[] zip = buildSeedZip(industryPack);
-        DataImportService.ImportResult result = dataImportService.importAllData(zip);
+        DataImportService.ImportResult result = dataImportService.importSeedPack(zip);
         log.info("Setup wizard imported seed pack {}: {} records in {}ms",
                 LogSanitizer.sanitize(industryPack), result.totalRecords(), result.durationMs());
 

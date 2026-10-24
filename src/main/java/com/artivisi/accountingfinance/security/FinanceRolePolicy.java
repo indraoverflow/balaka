@@ -1,6 +1,7 @@
 package com.artivisi.accountingfinance.security;
 
 import com.artivisi.accountingfinance.enums.Role;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -33,7 +34,7 @@ import java.util.TreeSet;
  * not finance authority.
  *
  * <p>The final role-permission matrix still requires CEO and Finance Controller
- * approval. See {@code docs/fasternet/FAS-106-role-assignment-policy.md}.
+ * approval. See {@code docs/security/finance-role-assignment-policy.md}.
  */
 public final class FinanceRolePolicy {
 
@@ -66,6 +67,27 @@ public final class FinanceRolePolicy {
                 && before.contains(role) && after.contains(role));
         changed.retainAll(FINANCE_ROLES);
         return changed;
+    }
+
+    /**
+     * Username of the authenticated actor, or {@code null} when the current thread
+     * has no authenticated (non-anonymous) actor. Batch imports use this to apply
+     * the same no-self-role-change rule as the user-management screens.
+     */
+    public static String actorUsername() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || authentication instanceof AnonymousAuthenticationToken) {
+            return null;
+        }
+        return authentication.getName();
+    }
+
+    /**
+     * Whether the current thread carries an authenticated, non-anonymous actor.
+     */
+    public static boolean hasAuthenticatedActor() {
+        return actorUsername() != null;
     }
 
     /**

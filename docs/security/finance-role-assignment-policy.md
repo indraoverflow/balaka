@@ -5,8 +5,9 @@ Status: **interim technical control in place; CEO and Finance Controller approva
 operational procedure, not weaken the guard without a new decision.
 
 Scope: user and role management in the Balaka instance used by FASTERNET
-(`UserController`, `UserService`). This policy does not change KUR accounting
-semantics or the ISP/accounting boundary.
+(`UserController`, `UserService`) and the bulk data-import path
+(`DataImportService`). This policy does not change KUR accounting semantics or
+the ISP/accounting boundary.
 
 ## Why this exists
 
@@ -42,8 +43,19 @@ write path depends on.
 5. **Non-finance user management is unchanged.** `ADMIN` may still create and
    manage accounts that hold only non-finance roles. `ADMIN` cannot use those
    accounts to acquire finance authority because of rules 2 and 3.
+6. **Bulk import applies the same rules.** `29_user_roles.csv` in an uploaded ZIP
+   is rejected as a whole when a row would add a finance role without finance
+   authority, or when the target username is the authenticated actor. The importer
+   never silently skips a disallowed row. `ADMIN` holds `DATA_IMPORT`, so without
+   this rule it could bypass rules 1-2 by uploading `admin,FINANCE_CONTROLLER`.
+7. **First-run bootstrap is the only exception.** The setup wizard may import a
+   bundled classpath seed pack while the `users` table is empty and the request is
+   unauthenticated. Only that pre-user, unauthenticated path may carry finance-role
+   rows. Uploaded archives, including those from an authenticated `ADMIN`, can
+   never use it. Bundled seed packs currently ship a header-only
+   `29_user_roles.csv`.
 
-An attempt that violates rules 1-4 is rejected, the change is not applied, and a
+An attempt that violates rules 1-7 is rejected, the change is not applied, and a
 failed `USER_CREATED` / `USER_UPDATED` / `PASSWORD_CHANGED` /
 `USER_STATUS_CHANGED` / `USER_DELETED` audit event records the actor and the
 attempted target. Successful role changes keep the existing `USER_UPDATED` event
@@ -55,6 +67,9 @@ Updated user: finance-grantee (id: <uuid>) roles: [STAFF] -> [FINANCE_CONTROLLER
 
 The security audit log records the actor username, timestamp, IP address and user
 agent for every event; the details above add the before/after role delta.
+Bulk-import finance-role changes and rejected import attempts are recorded the same
+way under `USER_UPDATED`; rejected attempts are written in their own transaction so
+the audit survives the rollback of the import.
 
 ## Bootstrap and operations
 
@@ -101,5 +116,10 @@ Automated coverage lives in:
   case.
 - `UserControllerRoleEscalationTest` — HTTP rejection and the actor/delta audit
   events.
+- `DataImportRoleGuardTest` — an authenticated `ADMIN` cannot import a finance role
+  for itself or another account, an `OWNER` can import a finance role, the
+  unauthenticated empty-user bootstrap still works, and the seed path cannot be
+  used by an authenticated caller.
+- `DataExportImportTest` — export/import round-trip remains green.
 
 No production financial data is used by these tests.
