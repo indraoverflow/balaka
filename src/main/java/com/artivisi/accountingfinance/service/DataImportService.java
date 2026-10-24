@@ -36,6 +36,14 @@ import java.util.zip.ZipInputStream;
 @SuppressWarnings("java:S1192") // Table names and CSV filenames must match database schema exactly
 public class DataImportService {
 
+    /**
+     * Canonical Balaka cash-on-hand and bank accounts, used only to seed the explicit
+     * {@code is_cash_bank} flag when a seed pack is imported. Cash reporting itself
+     * reads the flag; it never infers cash from an account-code prefix (FAS-77).
+     */
+    private static final Set<String> CANONICAL_CASH_BANK_CODES =
+            Set.of("1.1.01", "1.1.02", "1.1.03");
+
     private final EntityManager entityManager;
     private final DocumentStorageService documentStorageService;
     private final PasswordEncoder passwordEncoder;
@@ -830,6 +838,8 @@ public class DataImportService {
             account.setAccountCode(getField(row, 0));
             account.setAccountName(getField(row, 1));
             account.setAccountType(AccountType.valueOf(getField(row, 2)));
+            account.setIsCashBank(account.getAccountType() == AccountType.ASSET
+                    && CANONICAL_CASH_BANK_CODES.contains(account.getAccountCode()));
             parentCodes.put(getField(row, 0), getField(row, 3));
             account.setNormalBalance(NormalBalance.valueOf(getField(row, 4)));
             account.setActive(parseBoolean(getField(row, 5)));

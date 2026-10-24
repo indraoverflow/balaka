@@ -1,6 +1,6 @@
 {
   "contractVersion" : "fasternet.dashboard/v1",
-  "generatedAt" : "2026-10-24T07:01:37.272673697Z",
+  "generatedAt" : "2026-10-24T07:33:18.272028764Z",
   "asOf" : "2024-06-30",
   "period" : {
     "from" : "2024-06-01",
@@ -469,36 +469,6 @@
     }, {
       "accountCode" : "1.1.03",
       "accountName" : "Bank BNI",
-      "balance" : "0.00",
-      "status" : "posted"
-    }, {
-      "accountCode" : "1.1.04",
-      "accountName" : "Piutang Usaha",
-      "balance" : "0.00",
-      "status" : "posted"
-    }, {
-      "accountCode" : "1.1.05",
-      "accountName" : "Asuransi Dibayar Dimuka",
-      "balance" : "0.00",
-      "status" : "posted"
-    }, {
-      "accountCode" : "1.1.06",
-      "accountName" : "Sewa Dibayar Dimuka",
-      "balance" : "0.00",
-      "status" : "posted"
-    }, {
-      "accountCode" : "1.1.07",
-      "accountName" : "Langganan Dibayar Dimuka",
-      "balance" : "0.00",
-      "status" : "posted"
-    }, {
-      "accountCode" : "1.1.08",
-      "accountName" : "Piutang Pendapatan",
-      "balance" : "0.00",
-      "status" : "posted"
-    }, {
-      "accountCode" : "1.1.09",
-      "accountName" : "PPN Masukan",
       "balance" : "0.00",
       "status" : "posted"
     } ]

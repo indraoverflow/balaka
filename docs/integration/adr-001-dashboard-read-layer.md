@@ -45,7 +45,7 @@ dashboard endpoint, no KUR loan master, and no subscriber billing model yet.
 
 | Dashboard section | Source of truth | Existing component |
 |---|---|---|
-| Cash and bank balances | POSTED journal entries on cash/bank accounts | `DashboardService.calculateCashBalance`, `journalEntryRepository.sumDebit/CreditByAccountAndDateRange` |
+| Cash and bank balances | POSTED journal entries on accounts explicitly flagged `is_cash_bank` | `DashboardService.calculateCashBalance`, `journalEntryRepository.sumDebit/CreditByAccountAndDateRange` |
 | Revenue / expense / net profit | POSTED journal entries, period-scoped | `DashboardService`, `ReportService` income statement |
 | Receivables / payables | POSTED journals on AR/AP control accounts | `DashboardService`, `AgingReportService` |
 | Journal/trial balance drill-down | POSTED journals | `ReportService`, general ledger |

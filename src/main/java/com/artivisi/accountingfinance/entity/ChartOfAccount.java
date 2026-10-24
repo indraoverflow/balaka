@@ -74,6 +74,14 @@ public class ChartOfAccount extends BaseEntity {
     @Column(name = "is_permanent", nullable = false)
     private Boolean permanent = true;
 
+    /**
+     * Explicit marker for accounts that hold cash on hand or bank balances.
+     * Receivables, prepaid expenses and input VAT are current assets but are
+     * never cash; they must keep this flag false.
+     */
+    @Column(name = "is_cash_bank", nullable = false)
+    private Boolean isCashBank = false;
+
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 }
