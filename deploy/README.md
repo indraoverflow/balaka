@@ -202,6 +202,35 @@ The playbook checks are an earlier, actionable layer, not a replacement.
 ansible-playbook site.yml
 ```
 
+### 4. Deployment Output and Secrets
+
+Ansible `debug` output is written to stdout, CI logs, and any saved playbook
+log. Treat it as a public sink: never print a credential there.
+
+- The `site.yml` deployment summary prints the admin username and tells you to
+  use the `admin_password_plain` value from `group_vars/all.yml`. It never
+  prints the password itself; it is not a generated value.
+- When remote backup is enabled, the summary prints the path of the backup
+  encryption key, not the key. Retrieve it once over an authenticated SSH
+  session and store it in at least two safe places:
+
+  ```bash
+  sudo cat /opt/accounting-finance/.backup-key
+  ```
+
+Before running a playbook, check that no `debug` task re-introduces a leak:
+
+```bash
+cd deploy/ansible
+./tests/check-secret-debug.py
+```
+
+The check exits 1 when a `debug` task interpolates a credential name such as
+`admin_password_plain`, `db_password`, `document_encryption_key`,
+`app_remember_me_key`, `*_secret`, `*_token`, or a backup key. It is a static
+check for direct `{{ ... }}` references; indirect flows (loops, `set_fact`,
+`slurp`, command output) still require manual review during code review.
+
 ## SSL Setup
 
 After initial deployment, setup SSL for `akunting.artivisi.id`:
