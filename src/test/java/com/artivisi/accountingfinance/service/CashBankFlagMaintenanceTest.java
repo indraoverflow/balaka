@@ -218,6 +218,36 @@ class CashBankFlagMaintenanceTest {
     }
 
     @Test
+    @DisplayName("an update that omits isCashBank (REST API) keeps an explicit cash flag")
+    void omittedCashFlagOnUpdateKeepsExplicitFlag() {
+        ChartOfAccount explicit = createAssetLeaf("1.1.98", "Kas API", true);
+
+        ChartOfAccount partial = detachedCopy(explicit, false);
+        partial.setIsCashBank(null);
+        chartOfAccountService.update(explicit.getId(), partial);
+
+        ChartOfAccount reloaded = chartOfAccountRepository.findByAccountCode("1.1.98").orElseThrow();
+        assertThat(reloaded.getIsCashBank()).isTrue();
+        assertThat(reloaded.getCashBankSource()).isEqualTo(CashBankSource.EXPLICIT);
+    }
+
+    @Test
+    @DisplayName("an update that omits isCashBank (REST API) keeps a bank-linked flag")
+    void omittedCashFlagOnUpdateKeepsBankLink() {
+        ChartOfAccount leaf = createAssetLeaf("1.1.99", "Bank API");
+        createBankAccount("9000000099", leaf);
+
+        ChartOfAccount linked = chartOfAccountRepository.findByAccountCode("1.1.99").orElseThrow();
+        ChartOfAccount partial = detachedCopy(linked, false);
+        partial.setIsCashBank(null);
+        chartOfAccountService.update(linked.getId(), partial);
+
+        ChartOfAccount reloaded = chartOfAccountRepository.findByAccountCode("1.1.99").orElseThrow();
+        assertThat(reloaded.getIsCashBank()).isTrue();
+        assertThat(reloaded.getCashBankSource()).isEqualTo(CashBankSource.BANK_LINK);
+    }
+
+    @Test
     @DisplayName("chart-of-accounts CSV export/import round-trip preserves the explicit cash flag")
     void csvRoundTripPreservesCashFlag() throws IOException {
         createAssetLeaf("1.1.97", "Bank Ekspor", true);

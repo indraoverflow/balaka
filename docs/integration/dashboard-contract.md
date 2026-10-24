@@ -299,6 +299,9 @@ migration backfill:
   An explicit un-flag is rejected while a bank account still links the account.
 - The ZIP chart-of-accounts export/import carries `is_cash_bank`, so a round-trip keeps the
   flag; imported flags are treated as `EXPLICIT`.
+- The REST API (`/api/accounts`) exposes `isCashBank`. Omitting it from a `PUT` leaves the
+  stored flag unchanged, so an API update cannot silently remove an account from the cash
+  universe; sending an explicit `false` follows the same un-flag rules as the form.
 
 The Finance Controller still owns the FASTERNET cash-account mapping and must confirm the
 universe after any account change.

@@ -129,6 +129,7 @@ public class ChartOfAccountApiController {
         entity.setNormalBalance(request.normalBalance());
         entity.setIsHeader(request.isHeader() != null && request.isHeader());
         entity.setPermanent(request.permanent() != null && request.permanent());
+        entity.setIsCashBank(request.isCashBank());
         entity.setDescription(request.description());
 
         if (request.parentId() != null) {
@@ -159,6 +160,8 @@ public class ChartOfAccountApiController {
 
             Boolean permanent,
 
+            Boolean isCashBank,
+
             String description
     ) {}
 
@@ -174,6 +177,7 @@ public class ChartOfAccountApiController {
             boolean isHeader,
             boolean permanent,
             boolean active,
+            boolean isCashBank,
             String description
     ) {
         public static AccountResponse from(ChartOfAccount entity) {
@@ -189,6 +193,7 @@ public class ChartOfAccountApiController {
                     Boolean.TRUE.equals(entity.getIsHeader()),
                     Boolean.TRUE.equals(entity.getPermanent()),
                     Boolean.TRUE.equals(entity.getActive()),
+                    Boolean.TRUE.equals(entity.getIsCashBank()),
                     entity.getDescription()
             );
         }

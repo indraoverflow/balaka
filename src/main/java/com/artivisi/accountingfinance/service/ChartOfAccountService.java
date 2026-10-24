@@ -150,7 +150,12 @@ public class ChartOfAccountService {
             existing.setNormalBalance(accountData.getNormalBalance());
         }
 
-        applyExplicitCashBankFlag(existing, Boolean.TRUE.equals(accountData.getIsCashBank()));
+        // null means "not supplied" and must not clear an existing cash flag
+        // (the REST API allows clients to omit isCashBank). A supplied value is
+        // an explicit operator decision handled by applyExplicitCashBankFlag.
+        if (accountData.getIsCashBank() != null) {
+            applyExplicitCashBankFlag(existing, accountData.getIsCashBank());
+        }
 
         return chartOfAccountRepository.save(existing);
     }
