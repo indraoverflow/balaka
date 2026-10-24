@@ -81,6 +81,7 @@ class KurApiControllerTest {
                 .andExpect(jsonPath("$.contractVersion").value("fasternet.dashboard/v1"))
                 .andExpect(jsonPath("$.currency").value("IDR"))
                 .andExpect(jsonPath("$.loan.provenance").value("founder-estimate"))
+                .andExpect(jsonPath("$.loan.reference").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.loan.agreementAttached").value(false))
                 .andExpect(jsonPath("$.installments[0].number").value(1))
                 .andExpect(jsonPath("$.installments[0].amount").value("2757500.00"))

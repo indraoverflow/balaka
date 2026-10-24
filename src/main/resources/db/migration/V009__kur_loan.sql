@@ -18,7 +18,8 @@ CREATE TABLE kur_loans (
     product VARCHAR(50) NOT NULL DEFAULT 'KUR',
     -- Protected lender reference. Stored for reconciliation; never shown in full
     -- by the dashboard read layer.
-    loan_reference VARCHAR(100),
+    -- AES-GCM ciphertext expands the value; 255 leaves room for a 100-char reference.
+    loan_reference VARCHAR(255),
     borrower_name VARCHAR(200) NOT NULL,
     borrower_legal_owner VARCHAR(200),
     principal_original DECIMAL(19, 2) NOT NULL,

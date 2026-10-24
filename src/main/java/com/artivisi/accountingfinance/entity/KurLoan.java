@@ -2,8 +2,10 @@ package com.artivisi.accountingfinance.entity;
 
 import com.artivisi.accountingfinance.enums.KurLoanProvenance;
 import com.artivisi.accountingfinance.enums.KurLoanStatus;
+import com.artivisi.accountingfinance.security.EncryptedStringConverter;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -37,8 +39,10 @@ public class KurLoan extends TimestampedEntity {
     @Column(name = "product", nullable = false, length = 50)
     private String product = "KUR";
 
+    // Protected lender reference: encrypted at rest, never emitted by the read API.
     @Size(max = 100)
-    @Column(name = "loan_reference", length = 100)
+    @Column(name = "loan_reference", length = 255)
+    @Convert(converter = EncryptedStringConverter.class)
     private String loanReference;
 
     @NotNull
