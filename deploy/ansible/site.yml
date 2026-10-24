@@ -24,6 +24,13 @@
         msg: "admin_password_plain is not set or uses default value"
       when: admin_password_plain is not defined or admin_password_plain == 'CHANGE_THIS_ADMIN_PASSWORD'
 
+    - name: Validate production secrets before any installation step (security)
+      ansible.builtin.import_tasks:
+        file: "{{ playbook_dir }}/tasks/validate-production-secrets.yml"
+      tags:
+        - always
+        - preflight
+
     - name: Generate bcrypt hash for admin password
       ansible.builtin.set_fact:
         admin_password_bcrypt: "{{ admin_password_plain | password_hash('bcrypt', rounds=10) }}"
