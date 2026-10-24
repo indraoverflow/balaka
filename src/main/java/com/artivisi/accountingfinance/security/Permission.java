@@ -183,6 +183,12 @@ public final class Permission {
     public static final String BANK_RECONCILIATION_COMPLETE = "BANK_RECONCILIATION_COMPLETE";
     public static final String BANK_RECONCILIATION_CONFIG = "BANK_RECONCILIATION_CONFIG";
 
+    // KUR loan master, schedule, payments and reserve (FASTERNET FAS-95).
+    // Deliberately not granted to ADMIN: entering financial obligations is a
+    // finance duty, not a technical-administration duty.
+    public static final String KUR_WRITE = "KUR_WRITE";
+    public static final String KUR_VERIFY = "KUR_VERIFY";
+
     // User Management (Admin only)
     public static final String USER_VIEW = "USER_VIEW";
     public static final String USER_CREATE = "USER_CREATE";
@@ -270,6 +276,17 @@ public final class Permission {
                 TELEGRAM_MANAGE,
                 AUDIT_LOG_VIEW,
                 OWN_PAYSLIP_VIEW, OWN_PROFILE_VIEW, OWN_PROFILE_EDIT
+            );
+
+            case FINANCE_CONTROLLER -> Set.of(
+                DASHBOARD_VIEW,
+                REPORT_VIEW, REPORT_EXPORT,
+                ACCOUNT_VIEW,
+                JOURNAL_VIEW,
+                FISCAL_PERIOD_VIEW,
+                KUR_WRITE, KUR_VERIFY,
+                AUDIT_LOG_VIEW,
+                OWN_PROFILE_VIEW, OWN_PROFILE_EDIT
             );
 
             case ACCOUNTANT -> Set.of(

@@ -71,7 +71,13 @@ public enum ApiScope {
     BANK_RECON_WRITE("bank-recon:write",
             "Configure parsers, import statements, match items, create transactions from and complete reconciliations",
             Permission.BANK_RECONCILIATION_IMPORT, Permission.BANK_RECONCILIATION_MATCH,
-            Permission.BANK_RECONCILIATION_COMPLETE, Permission.BANK_RECONCILIATION_CONFIG);
+            Permission.BANK_RECONCILIATION_COMPLETE, Permission.BANK_RECONCILIATION_CONFIG),
+    KUR_WRITE("kur:write",
+            "Enter the KUR loan master, lender schedule, installment payments and reserve movements",
+            Permission.KUR_WRITE),
+    KUR_VERIFY("kur:verify",
+            "Verify a KUR loan's provenance after the signed agreement and lender schedule are attached",
+            Permission.KUR_VERIFY);
 
     private static final Map<String, ApiScope> BY_NAME = Arrays.stream(values())
             .collect(Collectors.toUnmodifiableMap(ApiScope::scope, Function.identity()));
