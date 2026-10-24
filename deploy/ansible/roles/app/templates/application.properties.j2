@@ -81,7 +81,8 @@ app.encryption.key={{ document_encryption_key }}
 {% endif %}
 
 # Remember Me (hash-based, 7 days)
-app.remember-me.key={{ app_remember_me_key }}
+# Supplied through APP_REMEMBER_ME_KEY in env.conf (never written in plaintext here)
+app.remember-me.key=${APP_REMEMBER_ME_KEY:}
 
 # Payroll configuration
 {% if app_payroll_template_id is defined %}
