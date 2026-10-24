@@ -15,7 +15,13 @@ import java.util.Map;
  *
  * <p>{@code alert.state} is one of {@code green}, {@code yellow}, {@code orange},
  * {@code red}, {@code unconfigured}, {@code unavailable}. The last two are not
- * colours: they mean the state cannot be evaluated safely.
+ * colours: they mean the state cannot be evaluated safely. {@code alert.state} is
+ * a v1 operational state and is <em>not</em> the framework §8 level.
+ *
+ * <p>{@code alert.frameworkLevel} is one of {@code GREEN}, {@code AMBER},
+ * {@code RED}, {@code CRITICAL}, {@code unavailable}. v1 has no forward cash-flow
+ * forecast, so it returns {@code unavailable} unless the Finance Controller has
+ * recorded a forecast-backed level; a v1 {@code green} is never framework GREEN.
  */
 public record KurAlertResponse(
         String contractVersion,
@@ -30,6 +36,9 @@ public record KurAlertResponse(
             String state,
             String severity,
             String reason,
+            String frameworkLevel,
+            String frameworkLevelReason,
+            String frameworkLevelSource,
             Shortfall shortfall,
             String dueDate,
             Long daysRemaining,
@@ -39,6 +48,7 @@ public record KurAlertResponse(
             Cash cash,
             Payment payment,
             Policy policy,
+            Provenance provenance,
             List<String> assumptions,
             String invariant
     ) {
@@ -63,7 +73,19 @@ public record KurAlertResponse(
             String qualifying,
             String earmarked,
             String separateAccount,
-            String status
+            String status,
+            List<ReserveComposition> composition
+    ) {
+    }
+
+    /** One reserve-tracker row; the v1 tracker has no separate account/tag id. */
+    public record ReserveComposition(
+            String entryId,
+            String pool,
+            String kind,
+            String amount,
+            String entryDate,
+            String sourceRef
     ) {
     }
 
@@ -72,7 +94,8 @@ public record KurAlertResponse(
             String minimumRequired,
             String source,
             String asOf,
-            String status
+            String status,
+            List<String> accountCodes
     ) {
     }
 
@@ -90,6 +113,23 @@ public record KurAlertResponse(
             String approvedBy,
             String approvedAt,
             Map<String, String> thresholds
+    ) {
+    }
+
+    /**
+     * Provenance required by contract §0/§7 for a financial alert: the loan master,
+     * the next schedule row, the reserve-tracker rows and the cash/bank accounts
+     * used to derive {@code cash.actual}.
+     */
+    public record Provenance(
+            String loanId,
+            String nextScheduleRowId,
+            String scheduleProvenance,
+            String scheduleSourceKind,
+            String scheduleSourceRef,
+            List<ReserveComposition> reserveComposition,
+            List<String> cashAccountCodes,
+            String cashAsOf
     ) {
     }
 

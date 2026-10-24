@@ -9,8 +9,9 @@ import java.math.RoundingMode;
  * Decimal-safe KUR money and reserve math.
  *
  * <p>Every value is a {@link BigDecimal} with two decimal places. The reserve gap
- * only ever compares qualifying reserve funds against the next obligation; it never
- * mutates an installment's paid state.
+ * compares qualifying reserve funds against the <em>outstanding</em> balance of the
+ * next obligation, so a partial payment is netted once and never double-counted. It
+ * never mutates an installment's paid state.
  */
 public final class KurMoneyMath {
 
@@ -38,16 +39,43 @@ public final class KurMoneyMath {
     }
 
     /**
-     * Gap = max(0, obligation - qualifying reserve). A fully funded obligation has
-     * a zero gap; a missing obligation has a zero gap only because there is nothing
-     * due, never because the reserve is being treated as a payment.
+     * Gap = max(0, outstanding - qualifying reserve).
+     *
+     * <p>{@code outstanding} is the contractual installment amount minus posted,
+     * non-reversed payments recorded through the as-of date. A partially paid
+     * installment remains the next obligation, but its paid amount already reduces
+     * the funding need; using the contractual amount here would double-count the
+     * payment. A fully funded outstanding balance has a zero gap. A missing
+     * obligation has a zero gap only because there is nothing due, never because
+     * the reserve is being treated as a payment.
+     *
+     * <p>A full-installment buffer is a separate target-reserve decision, not part
+     * of this funding gap.
      */
-    public static BigDecimal reserveGap(BigDecimal obligation, BigDecimal earmarked, BigDecimal separateAccount) {
-        if (obligation == null) {
+    public static BigDecimal reserveGap(BigDecimal outstanding, BigDecimal earmarked, BigDecimal separateAccount) {
+        if (outstanding == null) {
             return ZERO;
         }
-        BigDecimal gap = money(obligation).subtract(qualifyingReserve(earmarked, separateAccount));
+        BigDecimal gap = money(outstanding).subtract(qualifyingReserve(earmarked, separateAccount));
         return gap.signum() > 0 ? money(gap) : ZERO;
+    }
+
+    /**
+     * True when paying the outstanding balance would leave total cash below the
+     * approved <strong>total-cash floor</strong>.
+     *
+     * <p>{@code cash} already includes the earmarked reserve, so the reserve is not
+     * subtracted a second time. The single test is
+     * {@code cash - outstanding < minimumCash}: the floor is a total-cash floor, not
+     * an unencumbered operating-cash floor.
+     */
+    public static boolean cashFloorBreachedAfterOutstanding(
+            BigDecimal cash, BigDecimal outstanding, BigDecimal minimumCash) {
+        if (cash == null || minimumCash == null) {
+            return false;
+        }
+        BigDecimal outstandingOrZero = outstanding == null ? ZERO : money(outstanding);
+        return money(cash).subtract(outstandingOrZero).compareTo(money(minimumCash)) < 0;
     }
 
     public static BigDecimal outstanding(BigDecimal contractualAmount, BigDecimal paidAmount) {

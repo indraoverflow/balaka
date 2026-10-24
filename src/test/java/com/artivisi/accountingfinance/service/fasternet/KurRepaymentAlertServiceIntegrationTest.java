@@ -2,6 +2,7 @@ package com.artivisi.accountingfinance.service.fasternet;
 
 import com.artivisi.accountingfinance.TestcontainersConfiguration;
 import com.artivisi.accountingfinance.dto.fasternet.KurAlertResponse;
+import com.artivisi.accountingfinance.dto.fasternet.KurReserveResponse;
 import com.artivisi.accountingfinance.entity.ChartOfAccount;
 import com.artivisi.accountingfinance.entity.JournalEntry;
 import com.artivisi.accountingfinance.entity.JournalTemplate;
@@ -165,7 +166,7 @@ class KurRepaymentAlertServiceIntegrationTest {
     }
 
     @Test
-    @DisplayName("orange when actual cash beyond the minimum cannot cover the gap")
+    @DisplayName("orange when cash after paying the outstanding falls below the total-cash floor")
     void orangeWhenCashCannotCoverGap() {
         BigDecimal largeInstallment = new BigDecimal("9000000000.00");
         KurLoan loan = createLoan(KurLoanProvenance.VERIFIED, FIRST_DUE, largeInstallment);
@@ -177,6 +178,147 @@ class KurRepaymentAlertServiceIntegrationTest {
 
         assertThat(response.alert().state()).isEqualTo("orange");
         assertThat(response.alert().reason()).contains("cannot cover the reserve gap");
+    }
+
+    @Test
+    @DisplayName("cash floor is total cash: paying the outstanding breaches the floor even with a reserve")
+    void orangeWhenPayingOutstandingBreachesTotalCashFloor() {
+        BigDecimal installment = new BigDecimal("3050000.00");
+        KurLoan loan = createLoan(KurLoanProvenance.VERIFIED, FIRST_DUE, installment);
+        schedule(loan, FIRST_DUE, installment, KurScheduleSourceKind.LENDER_SCHEDULE, "lender-row-1");
+        reserve(loan, new BigDecimal("1000000.00"), "reserve-1");
+
+        // The test database carries seeded cash, so derive the actual total and set a
+        // floor exactly one gap below it. These inputs mirror the 3,050,000 /
+        // 1,000,000 / 1,000,000 worked example: the old
+        // (cash - minimumCash >= gap) test sees equality and passes, while paying the
+        // outstanding leaves cash below the floor.
+        KurReserveResponse before = loanService.reserve(loan.getId(), AS_OF);
+        BigDecimal cash = new BigDecimal(before.figures().get("cash.actual").value());
+        BigDecimal gap = installment.subtract(new BigDecimal("1000000.00"));
+        BigDecimal floor = cash.subtract(gap);
+        configure(loan, floor.toPlainString(), "3050000.00", "0.00", "10000000.00", "20000000.00");
+
+        KurAlertResponse response = alertService.evaluate(loan.getId(), AS_OF);
+
+        assertThat(response.alert().cash().actual()).isEqualTo(cash.setScale(2).toPlainString());
+        assertThat(response.alert().cash().minimumRequired()).isEqualTo(floor.setScale(2).toPlainString());
+        assertThat(response.alert().obligation().outstanding()).isEqualTo("3050000.00");
+        assertThat(response.alert().reserve().qualifying()).isEqualTo("1000000.00");
+        assertThat(response.alert().shortfall().amount()).isEqualTo("2050000.00");
+        assertThat(response.alert().state()).isEqualTo("orange");
+        assertThat(response.alert().reason()).contains("below the approved total-cash minimum");
+        assertThat(cash.subtract(floor))
+                .as("the old cash-beyond-minimum test sees cash-floor == gap and misses the breach")
+                .isEqualByComparingTo(gap);
+    }
+
+    @Test
+    @DisplayName("a partial payment from operating cash nets the gap once and keeps the contractual amount")
+    void partialPaymentFromOperatingCashNetsGapOnce() {
+        BigDecimal installment = new BigDecimal("3050000.00");
+        BigDecimal partial = new BigDecimal("1000000.00");
+        BigDecimal reserve = new BigDecimal("2050000.00");
+        KurLoan loan = createLoan(KurLoanProvenance.VERIFIED, FIRST_DUE, installment);
+        KurInstallment row = schedule(loan, FIRST_DUE, installment,
+                KurScheduleSourceKind.LENDER_SCHEDULE, "lender-row-1");
+        reserve(loan, reserve, "reserve-1");
+        pay(loan, row, partial, "payment-operating-cash-1");
+        configure(loan, "0.00", "2050000.00", "0.00", "2500000.00", "2800000.00");
+        postCash(new BigDecimal("1000000000.00"));
+
+        KurAlertResponse response = alertService.evaluate(loan.getId(), AS_OF);
+
+        assertThat(response.alert().obligation().amount())
+                .as("obligation.amount stays the contractual installment")
+                .isEqualTo("3050000.00");
+        assertThat(response.alert().obligation().paidAmount()).isEqualTo("1000000.00");
+        assertThat(response.alert().obligation().outstanding()).isEqualTo("2050000.00");
+        assertThat(response.alert().reserve().qualifying()).isEqualTo("2050000.00");
+        assertThat(response.alert().shortfall().amount())
+                .as("reserve already covers the outstanding; the payment is not counted twice")
+                .isEqualTo("0.00");
+        assertThat(response.alert().payment().status()).isEqualTo("partial");
+        assertThat(response.alert().state()).isEqualTo("green");
+    }
+
+    @Test
+    @DisplayName("a partial payment taken from the reserve leaves a reduced reserve and a 1,000,000 gap")
+    void partialPaymentFromReserveLeavesReducedReserveAndGap() {
+        BigDecimal installment = new BigDecimal("3050000.00");
+        BigDecimal partial = new BigDecimal("1000000.00");
+        KurLoan loan = createLoan(KurLoanProvenance.VERIFIED, FIRST_DUE, installment);
+        KurInstallment row = schedule(loan, FIRST_DUE, installment,
+                KurScheduleSourceKind.LENDER_SCHEDULE, "lender-row-1");
+        reserve(loan, new BigDecimal("2050000.00"), "reserve-1");
+        releaseReserve(loan, partial, "reserve-release-1");
+        pay(loan, row, partial, "payment-from-reserve-1");
+        configure(loan, "0.00", "3050000.00", "0.00", "2500000.00", "2800000.00");
+        postCash(new BigDecimal("1000000000.00"));
+
+        KurAlertResponse response = alertService.evaluate(loan.getId(), AS_OF);
+
+        assertThat(response.alert().obligation().amount()).isEqualTo("3050000.00");
+        assertThat(response.alert().obligation().outstanding()).isEqualTo("2050000.00");
+        assertThat(response.alert().reserve().qualifying()).isEqualTo("1050000.00");
+        assertThat(response.alert().shortfall().amount())
+                .as("gap is the unfunded outstanding, not the contractual amount")
+                .isEqualTo("1000000.00");
+        assertThat(response.alert().state()).isEqualTo("yellow");
+        assertThat(response.alert().reason()).contains("behind the approved funding plan");
+    }
+
+    @Test
+    @DisplayName("frameworkLevel is unavailable in v1 and the limitation is stated")
+    void frameworkLevelUnavailableInV1() {
+        KurLoan loan = createLoan(KurLoanProvenance.VERIFIED, FIRST_DUE);
+        schedule(loan, FIRST_DUE, KurScheduleSourceKind.LENDER_SCHEDULE, "lender-row-1");
+        reserve(loan, INSTALLMENT, "reserve-1");
+        configure(loan, "0.00", "2757500.00", "0.00", "2000000.00", "2500000.00");
+        postCash(new BigDecimal("1000000000.00"));
+
+        KurAlertResponse response = alertService.evaluate(loan.getId(), AS_OF);
+
+        assertThat(response.alert().state()).isEqualTo("green");
+        assertThat(response.alert().frameworkLevel())
+                .as("a v1 green is never framework GREEN")
+                .isEqualTo("unavailable");
+        assertThat(response.alert().frameworkLevelReason())
+                .contains("30-day projected-shortfall")
+                .contains("90-day runway")
+                .contains("not evaluated");
+        assertThat(response.alert().frameworkLevelSource()).contains("framework-s8-errata");
+        assertThat(response.alert().assumptions())
+                .anyMatch(line -> line.contains("a v1 green is not framework GREEN"));
+        assertThat(response.missing())
+                .extracting(KurAlertResponse.Missing::key)
+                .contains("kur.alert.frameworkLevel");
+    }
+
+    @Test
+    @DisplayName("the alert carries loan, schedule, reserve and cash provenance")
+    void alertCarriesProvenance() {
+        KurLoan loan = createLoan(KurLoanProvenance.VERIFIED, FIRST_DUE);
+        KurInstallment row = schedule(loan, FIRST_DUE, KurScheduleSourceKind.LENDER_SCHEDULE, "row-1");
+        reserve(loan, INSTALLMENT, "reserve-1");
+        configure(loan, "0.00", "2757500.00", "0.00", "2000000.00", "2500000.00");
+        postCash(new BigDecimal("1000000000.00"));
+
+        KurAlertResponse response = alertService.evaluate(loan.getId(), AS_OF);
+        KurAlertResponse.Provenance provenance = response.alert().provenance();
+
+        assertThat(provenance.loanId()).isEqualTo(loan.getId().toString());
+        assertThat(provenance.nextScheduleRowId()).isEqualTo(row.getId().toString());
+        assertThat(provenance.scheduleSourceKind()).isEqualTo("lender-schedule");
+        assertThat(provenance.scheduleSourceRef()).isEqualTo("row-1");
+        assertThat(provenance.scheduleProvenance()).isEqualTo("verified");
+        assertThat(provenance.reserveComposition()).hasSize(1);
+        assertThat(provenance.reserveComposition().getFirst().sourceRef()).isEqualTo("reserve-1");
+        assertThat(provenance.reserveComposition().getFirst().pool()).isEqualTo("EARMARKED");
+        assertThat(provenance.cashAccountCodes()).isNotEmpty();
+        assertThat(provenance.cashAsOf()).isEqualTo(AS_OF.toString());
+        assertThat(response.alert().reserve().composition()).hasSize(1);
+        assertThat(response.alert().cash().accountCodes()).isNotEmpty();
     }
 
     @Test
@@ -360,6 +502,19 @@ class KurRepaymentAlertServiceIntegrationTest {
         loanService.recordReserve(loan.getId(), new KurLoanService.ReserveCommand(
                 LocalDate.of(2026, 10, 22), KurReserveEntryKind.EARMARK, amount,
                 "sisihkan angsuran KUR", sourceRef));
+    }
+
+    private void releaseReserve(KurLoan loan, BigDecimal amount, String sourceRef) {
+        loanService.recordReserve(loan.getId(), new KurLoanService.ReserveCommand(
+                LocalDate.of(2026, 10, 23), KurReserveEntryKind.RELEASE, amount,
+                "pakai dana cadangan untuk angsuran KUR", sourceRef));
+    }
+
+    private void pay(KurLoan loan, KurInstallment installment, BigDecimal amount, String sourceRef) {
+        loanService.recordPayment(loan.getId(), installment.getId(),
+                new KurLoanService.PaymentCommand(
+                        LocalDate.of(2026, 10, 20), amount, "BRI-REF-" + sourceRef,
+                        "bukti-transfer-" + sourceRef + ".pdf", sourceRef));
     }
 
     private void postCash(BigDecimal amount) {

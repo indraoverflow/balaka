@@ -219,8 +219,19 @@ Control figures derived from the schedule:
 ```
 
 Qualifying reserve = earmarked balance + separately held reserve account, with no
-double counting of the same cash. `reserve.gap = max(0, obligation.nextDue − qualifying
-reserve)`.
+double counting of the same cash.
+
+`outstanding = obligation.amount − posted, non-reversed payments recorded through asOf`.
+`reserve.gap = max(0, outstanding − qualifying reserve)`. The gap is the **unfunded
+outstanding balance**, not the unfunded contractual amount: a partial payment reduces the
+funding need exactly once and is never subtracted again. `obligation.nextDue` keeps the
+contractual amount. A full-installment buffer, if policy wants one, is expressed through
+`targetReserve`, never by inflating the gap.
+
+`composition[]` lists the reserve-tracker rows composing the buckets (`entryId`, `pool`
+= `EARMARKED` \| `SEPARATE_ACCOUNT`, `kind`, `amount`, `entryDate`, `sourceRef`), and
+`cashAccounts[]` lists the cash/bank COA codes in `cash.actual`. Empty arrays mean the
+source has no such rows; they are never a fabricated zero (§7).
 
 ### 3.4 `GET /api/fasternet/v1/billing/summary?period=YYYY-MM`
 
@@ -235,8 +246,17 @@ subscriber count or billing total.
 
 ### 3.5 `GET /api/fasternet/v1/kur/alert?asOf=YYYY-MM-DD` (additive, FAS-96)
 
-Additive section added by FAS-96. It does **not** change the shapes of §3.2 or §3.3.
-The dashboard/alert feed may consume it, but the state is not an accounting posting.
+Additive section added by FAS-96, revised by FAS-108 for the Finance Controller's
+[FAS-104](/FAS/issues/FAS-104) conditions. It does **not** change the shapes of §3.2 or
+§3.3. The dashboard/alert feed may consume it, but the state is not an accounting
+posting.
+
+> **Every value in the example below is illustrative and unapproved.** The installment
+> 2,757,500, the 5,000,000 cash balance, the 1,000,000 reserve and the 1,757,500
+> shortfall are placeholder numbers for shape only. They are not founder figures, not a
+> verified lender schedule, and not an approved policy. The alternative 3,050,000
+> figure used in the worked examples is equally unapproved. No value here may be seeded
+> as verified or displayed as confirmed.
 
 ```json
 {
@@ -248,6 +268,9 @@ The dashboard/alert feed may consume it, but the state is not an accounting post
     "state": "unconfigured",
     "severity": "unknown",
     "reason": "Threshold policy is unconfigured: the CEO and Finance Controller have not approved the KUR repayment alert thresholds, so no green state is produced",
+    "frameworkLevel": "unavailable",
+    "frameworkLevelReason": "v1 has no forward cash-flow forecast: the framework's 30-day projected-shortfall test and 90-day runway condition are not evaluated, and no Finance Controller-recorded forecast-backed level exists; frameworkLevel is unavailable and a v1 green is not framework GREEN",
+    "frameworkLevelSource": "framework §8 (rev 3) + framework-s8-errata: AMBER runway 30-90 days, all-in burn base, 1 month = 30.44 days",
     "shortfall": { "amount": "1757500.00", "currency": "IDR", "basis": "reserve-gap", "status": "posted" },
     "dueDate": "2026-11-21",
     "daysRemaining": 28,
@@ -260,12 +283,17 @@ The dashboard/alert feed may consume it, but the state is not an accounting post
     },
     "reserve": {
       "qualifying": "1000000.00", "earmarked": "1000000.00",
-      "separateAccount": "0.00", "status": "posted"
+      "separateAccount": "0.00", "status": "posted",
+      "composition": [
+        { "entryId": "illustrative-uuid", "pool": "EARMARKED", "kind": "EARMARK",
+          "amount": "1000000.00", "entryDate": "2026-10-22", "sourceRef": "illustrative" }
+      ]
     },
     "cash": {
       "actual": "5000000.00", "minimumRequired": null,
       "source": "Balaka POSTED cash/bank account balances",
-      "asOf": "2026-10-24", "status": "posted"
+      "asOf": "2026-10-24", "status": "posted",
+      "accountCodes": ["1.1.01"]
     },
     "payment": { "status": "unpaid", "paidAmount": "0.00", "countsAsPaid": false,
                  "note": "a reserved amount is never a completed payment" },
@@ -278,11 +306,25 @@ The dashboard/alert feed may consume it, but the state is not an accounting post
         "orangeShortfall": null, "redShortfall": null
       }
     },
+    "provenance": {
+      "loanId": "illustrative-uuid",
+      "nextScheduleRowId": "illustrative-uuid",
+      "scheduleProvenance": "founder-estimate",
+      "scheduleSourceKind": "estimate",
+      "scheduleSourceRef": "calculated-amortization",
+      "reserveComposition": [
+        { "entryId": "illustrative-uuid", "pool": "EARMARKED", "kind": "EARMARK",
+          "amount": "1000000.00", "entryDate": "2026-10-22", "sourceRef": "illustrative" }
+      ],
+      "cashAccountCodes": ["1.1.01"],
+      "cashAsOf": "2026-10-24"
+    },
     "assumptions": [
       "cash source: Balaka POSTED cash/bank account balances as of 2026-10-24; no forward cash-flow forecast is applied",
       "reserve source: reserve movements recorded on or before 2026-10-24 (earmarked plus separate reserve account, no double counting)",
       "obligation: first KUR installment with an unpaid balance as of 2026-10-24; payment totals are counted only through 2026-10-24",
       "reserved funds are earmarked only; installment payment status is reported separately and a reserve is never a payment",
+      "framework level: v1 evaluates no forward forecast, so framework §8's 30-day projected-shortfall test and 90-day runway condition are not evaluated; frameworkLevel is unavailable and a v1 green is not framework GREEN. The Finance Controller continues the 90-day forecast and manual escalation outside v1",
       "threshold policy is unconfigured; no threshold value was assumed"
     ],
     "invariant": "a reserved amount is never a completed payment"
@@ -290,19 +332,58 @@ The dashboard/alert feed may consume it, but the state is not an accounting post
   "missing": [
     { "key": "kur.alert.policy",
       "reason": "no CEO + Finance Controller-approved threshold policy is recorded",
+      "owner": "Finance Controller" },
+    { "key": "kur.alert.frameworkLevel",
+      "reason": "v1 has no forward cash-flow forecast; the framework §8 runway and 30-day projected-shortfall tests are not evaluated",
       "owner": "Finance Controller" }
   ]
 }
 ```
 
+**Reserve gap and shortfall.** `obligation.amount` is always the contractual installment.
+`obligation.outstanding = amount − posted, non-reversed payments through asOf`.
+`shortfall.amount` and §3.3 `reserve.gap` are both
+`max(0, outstanding − qualifying reserve)`. The partially paid installment remains the
+next obligation until fully paid, but only the **funding gap** nets the partial payment.
+A full-installment buffer belongs in `targetReserve`, not in `shortfall`.
+
+Worked examples (illustrative, unapproved):
+
+| Scenario | Installment | Paid | Outstanding | Reserve | Gap |
+|---|---|---|---|---|---|
+| Paid 1,000,000 from operating cash; reserve unchanged 2,050,000 | 3,050,000 | 1,000,000 | 2,050,000 | 2,050,000 | **0** (contractual basis would wrongly report 1,000,000) |
+| Paid 1,000,000 from the reserve, leaving 1,050,000 | 3,050,000 | 1,000,000 | 2,050,000 | 1,050,000 | **1,000,000** (contractual basis would wrongly report 2,000,000) |
+
+**Cash floor.** `minimumCash` is a **total-cash floor**, not an unencumbered
+operating-cash floor. `cash.actual` already includes the earmarked reserve (it is POSTED
+cash/bank balance), so the reserve must not be subtracted a second time. The single test
+is `cash.actual − outstanding >= minimumCash`: after paying the outstanding, total cash
+must stay at or above the floor. Example: cash 3,050,000, reserve 1,000,000,
+minimumCash 1,000,000, outstanding 3,050,000 → paying leaves 0, below the floor, so the
+state is **orange**. The old `(cash − minimumCash) >= gap` test passes on the same
+inputs and understates the risk, so it is not used. `cash.actual` is still `unavailable`
+(never zero) when no cash/bank balance can be derived.
+
+**Framework level.** `alert.frameworkLevel` ∈ `GREEN`, `AMBER`, `RED`, `CRITICAL`,
+`unavailable`, mapped to framework [FAS-2](/FAS/issues/FAS-2) `framework` §8 and
+`framework-s8-errata` (AMBER runway band **30-90 days**, all-in burn base, 1 month =
+30.44 days). v1 has no forward forecast and cannot evaluate the §8 30-day
+projected-shortfall test or the 90-day runway condition. Therefore:
+
+- `frameworkLevel` is `unavailable` with a reason and assumption stating the limitation,
+  unless the Finance Controller has recorded a forecast-backed level (none exists).
+- A v1 alert `green` is **not** framework GREEN and must never be rendered as such.
+  `yellow`/`orange` must not mask a framework RED/CRITICAL.
+- The Finance Controller continues the 90-day forecast and manual escalation outside v1.
+
 **State rules.** `alert.state` ∈ `green`, `yellow`, `orange`, `red`, `unconfigured`,
-`unavailable`.
+`unavailable`. `alert.state` is a v1 operational state and is not the framework level.
 
 | state | Meaning |
 |---|---|
 | `green` | Reserve funded to the approved target and actual cash covers the approved minimum, due date not passed |
 | `yellow` | Reserve accumulation is behind the approved funding plan (gap, or target-reserve deficit beyond the funding-pace tolerance) |
-| `orange` | Projected cash flow may be insufficient (minimum cash breached, cash beyond the minimum cannot cover the gap, gap reaches the orange cutoff), **or** an unverified schedule reaches the red cutoff (red is withheld) |
+| `orange` | Projected cash flow may be insufficient (actual total cash below the minimum, or cash after paying the outstanding falls below the total-cash minimum, or the gap reaches the orange cutoff), **or** an unverified schedule reaches the red cutoff (red is withheld) |
 | `red` | The next unpaid installment is overdue, or a **verified** lender schedule shows a gap at/above the red cutoff |
 | `unconfigured` | No CEO + Finance Controller-approved threshold policy is recorded. Never rendered as green |
 | `unavailable` | Required input (obligation, reserve movements, or cash) cannot be derived. Never treated as zero |
@@ -319,6 +400,14 @@ statuses. `obligation.scheduleStatus` is `verified` only for a `verified`/`bank-
 loan whose next row is a lender schedule row; otherwise it is `estimate`. `payment`
 is the actual installment payment state and is never derived from the reserve.
 `alert.state` is a derived projection, not a posted journal.
+
+**Provenance (§0/§7).** A financial alert must be traceable. `alert.provenance` carries
+the loan master id, the next schedule row id, the row's schedule provenance/source kind/
+source ref, the reserve-tracker rows composing each bucket (pool, entry id, kind, amount,
+date, source ref), and the cash/bank COA codes with the as-of date used for
+`cash.actual`. `sourceRef: "calculated-amortization"` alone is not sufficient provenance.
+The v1 reserve tracker has no separate account/tag id, so the tracker entry id and source
+ref are the available identifiers; that gap is stated rather than invented.
 
 ## 4. Series (charts)
 
@@ -431,7 +520,7 @@ not `0`; series values are decimal strings.
 |---|---|
 | Cash / revenue / expense / receivable / payable | COA codes + posted journal date range |
 | KUR installment | loan master id + schedule row id + provenance |
-| KUR reserve | account/tag ids composing the reserve and the obligation row |
+| KUR reserve / alert §3.3, §3.5 | loan master id + schedule row id + reserve-tracker entry ids per pool (with source refs) + cash/bank COA codes and as-of date |
 | Billing | invoice ids or journal range + collection references |
 
 ## 8. Open questions (owner)
@@ -439,8 +528,10 @@ not `0`; series values are decimal strings.
 1. Finance Controller: confirm COA codes for founder capital, KUR liability (current /
    non-current), reserve/earmarked cash, subscriber revenue, and AR. Until confirmed
    those figures stay `unavailable`.
-2. Finance Controller: approve reserve-gap formula and alert thresholds (green/yellow/
-   orange/red); until approved thresholds are `estimate` + `notes: "unconfigured"`.
+2. Finance Controller: the reserve-gap basis (outstanding) and total-cash floor are
+   defined in §3.3/§3.5 and await final semantic sign-off; approve the alert thresholds
+   (green/yellow/orange/red). Until approved, thresholds stay `estimate` +
+   `notes: "unconfigured"`.
 3. CTO: confirm whether the dashboard service account uses a dedicated API client with
    only `REPORT_VIEW`.
 

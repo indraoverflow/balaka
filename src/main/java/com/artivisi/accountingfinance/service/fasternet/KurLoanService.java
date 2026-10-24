@@ -2,6 +2,7 @@ package com.artivisi.accountingfinance.service.fasternet;
 
 import com.artivisi.accountingfinance.dto.fasternet.KurReserveResponse;
 import com.artivisi.accountingfinance.dto.fasternet.KurScheduleResponse;
+import com.artivisi.accountingfinance.entity.ChartOfAccount;
 import com.artivisi.accountingfinance.entity.Document;
 import com.artivisi.accountingfinance.entity.KurInstallment;
 import com.artivisi.accountingfinance.entity.KurLoan;
@@ -153,6 +154,7 @@ public class KurLoanService {
      * make an earlier overdue installment look settled.
      */
     public record ObligationSnapshot(
+            UUID installmentId,
             Integer installmentNumber,
             LocalDate dueDate,
             BigDecimal amount,
@@ -756,7 +758,8 @@ public class KurLoanService {
         }
 
         // Cash actually held in the ledger's cash/bank accounts.
-        if (chartOfAccountRepository.findCashBankAccounts().isEmpty()) {
+        List<ChartOfAccount> cashAccounts = chartOfAccountRepository.findCashBankAccounts();
+        if (cashAccounts.isEmpty()) {
             figures.put("cash.actual", new KurReserveResponse.Figure(null, "unavailable"));
             missing.add(new KurReserveResponse.Missing(
                     "cash.actual", "no cash/bank account is configured in the chart of accounts", "Finance Controller"));
@@ -787,7 +790,7 @@ public class KurLoanService {
 
         if (nextDue != null && reserveConfigured) {
             figures.put("reserve.gap", new KurReserveResponse.Figure(
-                    moneyString(KurMoneyMath.reserveGap(nextDue.amount(), earmarked, separate)), "posted"));
+                    moneyString(KurMoneyMath.reserveGap(nextDue.outstanding(), earmarked, separate)), "posted"));
         } else {
             figures.put("reserve.gap", new KurReserveResponse.Figure(null, "unavailable"));
             missing.add(new KurReserveResponse.Missing(
@@ -796,12 +799,28 @@ public class KurLoanService {
                     "Finance Controller"));
         }
 
+        List<KurReserveResponse.ReserveEntry> composition = entries.stream()
+                .map(entry -> new KurReserveResponse.ReserveEntry(
+                        entry.getId().toString(),
+                        entry.getKind().isEarmarked() ? "EARMARKED" : "SEPARATE_ACCOUNT",
+                        entry.getKind().name(),
+                        moneyString(entry.getAmount()),
+                        dateString(entry.getEntryDate()),
+                        entry.getSourceRef()))
+                .toList();
+        List<KurReserveResponse.CashAccount> cashAccountDtos = cashAccounts.stream()
+                .map(account -> new KurReserveResponse.CashAccount(
+                        account.getAccountCode(), account.getAccountName()))
+                .toList();
+
         return new KurReserveResponse(
                 CONTRACT_VERSION,
                 Instant.now().toString(),
                 dateString(effectiveAsOf),
                 CURRENCY,
                 figures,
+                composition,
+                cashAccountDtos,
                 INVARIANT,
                 missing);
     }
@@ -885,6 +904,7 @@ public class KurLoanService {
                 .getOrDefault(installment.getId(), BigDecimal.ZERO.setScale(2)));
         BigDecimal outstanding = KurMoneyMath.outstanding(installment.getAmount(), paid);
         return new ObligationSnapshot(
+                installment.getId(),
                 installment.getInstallmentNumber(),
                 installment.getDueDate(),
                 KurMoneyMath.money(installment.getAmount()),

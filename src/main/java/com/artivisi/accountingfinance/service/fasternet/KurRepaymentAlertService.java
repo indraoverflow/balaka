@@ -38,13 +38,23 @@ import java.util.Map;
  *   <li>red: the next unpaid installment is overdue, or a <em>verified</em>
  *       schedule shows a gap at/above the approved red cutoff;</li>
  *   <li>orange: the gap reaches the approved orange cutoff, actual cash is below
- *       the approved minimum, actual cash beyond the minimum cannot cover the gap,
- *       or an unverified schedule reaches the red cutoff (red is withheld);</li>
+ *       the approved total-cash minimum, actual cash after paying the outstanding
+ *       falls below that minimum, or an unverified schedule reaches the red cutoff
+ *       (red is withheld);</li>
  *   <li>yellow: the reserve is behind the approved funding plan;</li>
  *   <li>green: the reserve is funded to target and cash covers the minimum;</li>
  *   <li>unconfigured: no approved threshold policy has been recorded;</li>
  *   <li>unavailable: a required input is missing.</li>
  * </ul>
+ *
+ * <p>{@code minimumCash} is a <strong>total-cash floor</strong>: the test is
+ * {@code cash.actual - outstanding >= minimumCash}. {@code cash.actual} already
+ * includes the earmarked reserve, so the gap is not subtracted again.
+ *
+ * <p>{@code frameworkLevel} is not derived in v1. The framework §8 GREEN and AMBER
+ * legs need a 90-day runway forecast, and RED needs the 30-day projected-shortfall
+ * test; none exists here. The field is therefore {@code unavailable} with the
+ * limitation stated in the reason and assumptions.
  */
 @Service
 @RequiredArgsConstructor
@@ -54,6 +64,15 @@ public class KurRepaymentAlertService {
     public static final String CURRENCY = "IDR";
     public static final String INVARIANT = "a reserved amount is never a completed payment";
     public static final String CASH_SOURCE = "Balaka POSTED cash/bank account balances";
+    public static final String FRAMEWORK_LEVEL_UNAVAILABLE = "unavailable";
+    public static final String FRAMEWORK_LEVEL_SOURCE =
+            "framework §8 (rev 3) + framework-s8-errata: AMBER runway 30-90 days, "
+                    + "all-in burn base, 1 month = 30.44 days";
+    public static final String FRAMEWORK_LEVEL_REASON =
+            "v1 has no forward cash-flow forecast: the framework's 30-day projected-shortfall "
+                    + "test and 90-day runway condition are not evaluated, and no Finance "
+                    + "Controller-recorded forecast-backed level exists; frameworkLevel is "
+                    + "unavailable and a v1 green is not framework GREEN";
 
     private final KurLoanRepository loanRepository;
     private final KurAlertPolicyRepository policyRepository;
@@ -97,6 +116,10 @@ public class KurRepaymentAlertService {
                     "installment due date and amount are not from a verified lender schedule",
                     "Finance Controller"));
         }
+        missing.put("kur.alert.frameworkLevel", new KurAlertResponse.Missing(
+                "kur.alert.frameworkLevel",
+                FRAMEWORK_LEVEL_REASON,
+                "Finance Controller"));
 
         Evaluation evaluation = evaluateState(effectiveAsOf, obligation, policy, gap, cash,
                 qualifyingReserve, policyConfigured);
@@ -127,23 +150,51 @@ public class KurRepaymentAlertService {
                 obligation != null && isPaid(obligation.status()),
                 INVARIANT);
 
+        List<KurAlertResponse.ReserveComposition> reserveComposition = reserve.composition().stream()
+                .map(entry -> new KurAlertResponse.ReserveComposition(
+                        entry.entryId(),
+                        entry.pool(),
+                        entry.kind(),
+                        entry.amount(),
+                        entry.entryDate(),
+                        entry.sourceRef()))
+                .toList();
+        List<String> cashAccountCodes = reserve.cashAccounts().stream()
+                .map(KurReserveResponse.CashAccount::accountCode)
+                .toList();
+
         KurAlertResponse.Reserve reserveDto = new KurAlertResponse.Reserve(
                 moneyString(qualifyingReserve),
                 moneyString(earmarked),
                 moneyString(separate),
-                qualifyingReserve == null ? "unavailable" : "posted");
+                qualifyingReserve == null ? "unavailable" : "posted",
+                reserveComposition);
 
         KurAlertResponse.Cash cashDto = new KurAlertResponse.Cash(
                 moneyString(cash),
                 policyConfigured ? moneyString(policy.getMinimumCash()) : null,
                 CASH_SOURCE,
                 effectiveAsOf.toString(),
-                cashStatus);
+                cashStatus,
+                cashAccountCodes);
+
+        KurAlertResponse.Provenance provenance = new KurAlertResponse.Provenance(
+                loan.getId().toString(),
+                obligation == null ? null : obligation.installmentId().toString(),
+                obligation == null ? null : obligation.provenance().getJsonValue(),
+                obligation == null ? null : obligation.sourceKind().getJsonValue(),
+                obligation == null ? null : obligation.sourceRef(),
+                reserveComposition,
+                cashAccountCodes,
+                effectiveAsOf.toString());
 
         KurAlertResponse.Alert alert = new KurAlertResponse.Alert(
                 evaluation.state().getJsonValue(),
                 evaluation.state().getSeverity(),
                 evaluation.reason(),
+                FRAMEWORK_LEVEL_UNAVAILABLE,
+                FRAMEWORK_LEVEL_REASON,
+                FRAMEWORK_LEVEL_SOURCE,
                 shortfall,
                 obligation == null ? null : obligation.dueDate().toString(),
                 obligation == null ? null : obligation.daysRemaining(),
@@ -153,6 +204,7 @@ public class KurRepaymentAlertService {
                 cashDto,
                 payment,
                 policyDto(policy),
+                provenance,
                 assumptions,
                 INVARIANT);
 
@@ -218,7 +270,7 @@ public class KurRepaymentAlertService {
 
         if (cash != null && cash.compareTo(minimumCash) < 0) {
             return Evaluation.of(KurAlertState.ORANGE,
-                    "Actual cash " + moneyString(cash) + " is below the approved minimum cash "
+                    "Actual cash " + moneyString(cash) + " is below the approved total-cash minimum "
                             + moneyString(minimumCash) + " as of " + asOf);
         }
         if (gap.compareTo(orangeCutoff) >= 0) {
@@ -227,11 +279,17 @@ public class KurRepaymentAlertService {
                             + moneyString(orangeCutoff));
         }
         if (cash != null) {
-            BigDecimal cashBeyondMinimum = cash.subtract(minimumCash);
-            if (cashBeyondMinimum.compareTo(gap) < 0) {
+            BigDecimal cashAfterOutstanding = KurMoneyMath.money(cash)
+                    .subtract(KurMoneyMath.money(obligation.outstanding()));
+            if (KurMoneyMath.cashFloorBreachedAfterOutstanding(
+                    cash, obligation.outstanding(), minimumCash)) {
                 return Evaluation.of(KurAlertState.ORANGE,
-                        "Actual cash " + moneyString(cash) + " minus minimum cash " + moneyString(minimumCash)
-                                + " cannot cover the reserve gap " + moneyString(gap) + " as of " + asOf);
+                        "Actual cash " + moneyString(cash) + " minus the outstanding "
+                                + moneyString(obligation.outstanding()) + " leaves "
+                                + moneyString(cashAfterOutstanding)
+                                + ", below the approved total-cash minimum " + moneyString(minimumCash)
+                                + "; cash cannot cover the reserve gap " + moneyString(gap)
+                                + " as of " + asOf);
             }
         }
         if (gap.signum() > 0) {
@@ -277,6 +335,10 @@ public class KurRepaymentAlertService {
                 + "; payment totals are counted only through " + asOf);
         assumptions.add("reserved funds are earmarked only; installment payment status is reported "
                 + "separately and a reserve is never a payment");
+        assumptions.add("framework level: v1 evaluates no forward forecast, so framework §8's 30-day "
+                + "projected-shortfall test and 90-day runway condition are not evaluated; "
+                + "frameworkLevel is unavailable and a v1 green is not framework GREEN. The Finance "
+                + "Controller continues the 90-day forecast and manual escalation outside v1");
         if (policyConfigured) {
             assumptions.add("thresholds approved by " + policy.getApprovedBy()
                     + " under reference " + policy.getApprovalReference()
