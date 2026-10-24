@@ -225,6 +225,7 @@ The ISP app writes the event and its target state in the **same local transactio
 
 Rules:
 
+- In `STAGED` mode the accountant posts the event through the approved Balaka template and records the resulting Balaka transaction id/number on the outbox row before it becomes `POSTED`. The idempotency key stays reserved so a later automated replay cannot duplicate the manual posting.
 - Unique constraint on `idempotency_key`; one outbox row per logical event.
 - Retry with exponential backoff and jitter; bounded attempts; every attempt recorded.
 - No batch replay without the same idempotency keys; replays must be safe.
