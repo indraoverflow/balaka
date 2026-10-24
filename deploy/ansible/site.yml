@@ -113,7 +113,7 @@
           - "[ ] Encrypted USB drive (separate location)"
           - ""
           - "After saving the key, verify you can decrypt a backup:"
-          - "  gpg --decrypt --passphrase-file <(echo \"KEY\") backup.gpg"
+          - "  gpg --batch --yes --decrypt --passphrase-file /opt/{{ app_name }}/.backup-key backup.tar.gz.gpg > backup.tar.gz"
           - ""
       when:
         - backup_b2_enabled | default(false) or backup_gdrive_enabled | default(false)
