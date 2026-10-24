@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -291,8 +292,17 @@ public class FasternetDashboardReadService {
                     "Finance Controller"));
         }
 
+        // Series never mix states: every non-null point is derived from POSTED journal
+        // entries only. A series with no derivable point is reported unavailable, not zero.
+        String seriesStatus = cashSeries.stream().anyMatch(Objects::nonNull)
+                || revenueSeries.stream().anyMatch(Objects::nonNull)
+                || expenseSeries.stream().anyMatch(Objects::nonNull)
+                || reserveSeries.stream().anyMatch(Objects::nonNull)
+                ? STATUS_POSTED : STATUS_UNAVAILABLE;
+
         FasternetOverviewResponse.Series series = new FasternetOverviewResponse.Series(
-                periods, cashSeries, reserveSeries, revenueSeries, expenseSeries, cashAccountRows);
+                seriesStatus, periods, cashSeries, reserveSeries, revenueSeries, expenseSeries,
+                cashAccountRows);
 
         FasternetOverviewResponse.Company company = new FasternetOverviewResponse.Company(
                 config == null ? null : config.getId().toString(),

@@ -47,6 +47,7 @@ public record FasternetOverviewResponse(
     }
 
     public record Series(
+            String status,
             List<String> periods,
             List<String> cash,
             List<String> reserve,

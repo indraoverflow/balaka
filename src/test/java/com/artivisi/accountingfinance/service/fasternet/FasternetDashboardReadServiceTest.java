@@ -175,6 +175,7 @@ class FasternetDashboardReadServiceTest {
         FasternetOverviewResponse overview = readService.buildOverview(AS_OF);
         FasternetOverviewResponse.Series series = overview.series();
 
+        assertThat(series.status()).isEqualTo("posted");
         assertThat(series.periods()).hasSize(4);
         assertThat(series.periods().get(3)).isEqualTo("2024-06");
         assertThat(series.cash()).hasSize(4);
