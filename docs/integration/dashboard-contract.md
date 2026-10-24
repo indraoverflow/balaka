@@ -115,7 +115,7 @@ Returns the envelope with these figure keys:
 | `equity.founderCapital` | IDR | founder-capital equity accounts | `unavailable` until COA mapping confirmed by Finance Controller |
 | `kur.installmentDue.next` | IDR | KUR schedule (FAS-23) | `unavailable` until verified schedule exists |
 | `kur.reserve.earmarked` | IDR | reserve tracker (FAS-23) | `unavailable` until configured |
-| `kur.reserve.gap` | IDR | max(0, due − qualifying reserve) | `unavailable` until configured |
+| `kur.reserve.gap` | IDR | max(0, outstanding − qualifying reserve), same basis as §3.3/§3.5 | `unavailable` until the Finance Controller signs off the formula and maps the reserve accounts |
 | `subscribers.active` | count | subscriber master | `unavailable` (no subscriber master in v1) |
 | `subscribers.new.period` | count | subscriber master | `unavailable` |
 | `subscribers.cancelled.period` | count | subscriber master | `unavailable` |

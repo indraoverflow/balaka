@@ -223,7 +223,7 @@ public class FasternetDashboardReadService {
         figures.put("kur.reserve.gap", unavailable("kur.reserve.gap", "Gap reserve KUR",
                 UNIT_IDR, balancePeriod(asOf), "kur-reserve-tracker",
                 "FasternetDashboardReadService#kurReserve",
-                "reserve-gap formula and reserve accounts are not approved yet",
+                "the outstanding-based reserve-gap basis is defined in the dashboard contract and awaits Finance Controller sign-off; reserve accounts are not mapped yet",
                 "Finance Controller", missing));
 
         // ---- subscriber / billing aggregates: no approved model/mapping in v1 ----
