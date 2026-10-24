@@ -3,6 +3,7 @@ package com.artivisi.accountingfinance.service;
 import com.artivisi.accountingfinance.TestcontainersConfiguration;
 import com.artivisi.accountingfinance.entity.User;
 import com.artivisi.accountingfinance.enums.Role;
+import com.artivisi.accountingfinance.exception.FinanceRoleAssignmentException;
 import com.artivisi.accountingfinance.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -348,7 +349,7 @@ class UserServiceTest {
             User user = createTestUser();
 
             User updateData = buildUpdateData(user);
-            Set<Role> newRoles = Set.of(Role.ADMIN, Role.OWNER);
+            Set<Role> newRoles = Set.of(Role.ADMIN, Role.ACCOUNTANT);
 
             User updated = userService.update(user.getId(), updateData, newRoles);
 
@@ -503,6 +504,162 @@ class UserServiceTest {
     }
 
     @Nested
+    @DisplayName("Finance Role Separation of Duties")
+    class FinanceRoleSeparationTests {
+
+        @Test
+        @WithMockUser(username = "selfadmin", roles = {"ADMIN"})
+        @DisplayName("ADMIN cannot grant itself FINANCE_CONTROLLER")
+        void adminCannotGrantFinanceControllerToSelf() {
+            User self = createUserWithRoles("selfadmin", Role.ADMIN);
+            User updateData = buildUpdateData(self);
+
+            assertThatThrownBy(() -> userService.update(self.getId(), updateData,
+                    Set.of(Role.ADMIN, Role.FINANCE_CONTROLLER)))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("own account");
+
+            assertThat(userRepository.findById(self.getId()).orElseThrow().getRoles())
+                    .containsExactly(Role.ADMIN);
+        }
+
+        @Test
+        @WithMockUser(username = "selfadmin", roles = {"ADMIN"})
+        @DisplayName("ADMIN cannot grant itself OWNER")
+        void adminCannotGrantOwnerToSelf() {
+            User self = createUserWithRoles("selfadmin", Role.ADMIN);
+            User updateData = buildUpdateData(self);
+
+            assertThatThrownBy(() -> userService.update(self.getId(), updateData,
+                    Set.of(Role.ADMIN, Role.OWNER)))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("own account");
+
+            assertThat(userRepository.findById(self.getId()).orElseThrow().getRoles())
+                    .containsExactly(Role.ADMIN);
+        }
+
+        @Test
+        @DisplayName("ADMIN cannot grant a finance role to another account")
+        void adminCannotGrantFinanceRoleToAnotherAccount() {
+            User target = createUserWithRoles("finance-target", Role.STAFF);
+            User updateData = buildUpdateData(target);
+
+            assertThatThrownBy(() -> userService.update(target.getId(), updateData,
+                    Set.of(Role.FINANCE_CONTROLLER)))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("finance role");
+
+            assertThat(userRepository.findById(target.getId()).orElseThrow().getRoles())
+                    .containsExactly(Role.STAFF);
+        }
+
+        @Test
+        @DisplayName("ADMIN cannot create an account that already holds a finance role")
+        void adminCannotCreateFinanceRoleAccount() {
+            User user = buildTestUser();
+
+            assertThatThrownBy(() -> userService.create(user, Set.of(Role.FINANCE_CONTROLLER)))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("finance roles");
+
+            assertThat(userRepository.findByUsername(user.getUsername())).isEmpty();
+        }
+
+        @Test
+        @WithMockUser(username = "fc-actor", roles = {"FINANCE_CONTROLLER"})
+        @DisplayName("FINANCE_CONTROLLER can grant a finance role")
+        void financeControllerCanGrantFinanceRole() {
+            User target = createUserWithRoles("finance-grantee", Role.STAFF);
+            User updateData = buildUpdateData(target);
+
+            User updated = userService.update(target.getId(), updateData,
+                    Set.of(Role.FINANCE_CONTROLLER));
+
+            assertThat(updated.getRoles()).containsExactly(Role.FINANCE_CONTROLLER);
+        }
+
+        @Test
+        @WithMockUser(username = "owner-self", roles = {"OWNER"})
+        @DisplayName("Nobody can change their own roles, even with finance authority")
+        void ownerCannotChangeOwnRoles() {
+            User self = createUserWithRoles("owner-self", Role.OWNER);
+            User updateData = buildUpdateData(self);
+
+            assertThatThrownBy(() -> userService.update(self.getId(), updateData,
+                    Set.of(Role.OWNER, Role.FINANCE_CONTROLLER)))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("own account");
+
+            assertThat(userRepository.findById(self.getId()).orElseThrow().getRoles())
+                    .containsExactly(Role.OWNER);
+        }
+
+        @Test
+        @DisplayName("ADMIN cannot change the password of a finance-role account")
+        void adminCannotResetFinanceAccountPassword() {
+            User finance = createUserWithRoles("finance-password", Role.FINANCE_CONTROLLER);
+            String originalPassword = finance.getPassword();
+
+            assertThatThrownBy(() -> userService.changePassword(finance.getId(), "NewPassword#123"))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("finance role");
+
+            assertThat(userRepository.findById(finance.getId()).orElseThrow().getPassword())
+                    .isEqualTo(originalPassword);
+        }
+
+        @Test
+        @WithMockUser(username = "fc-actor", roles = {"FINANCE_CONTROLLER"})
+        @DisplayName("FINANCE_CONTROLLER can reset a finance-role password")
+        void financeControllerCanResetFinanceAccountPassword() {
+            User finance = createUserWithRoles("finance-password-reset", Role.FINANCE_CONTROLLER);
+
+            userService.changePassword(finance.getId(), "NewPassword#123");
+
+            assertThat(passwordEncoder.matches("NewPassword#123",
+                    userRepository.findById(finance.getId()).orElseThrow().getPassword())).isTrue();
+        }
+
+        @Test
+        @DisplayName("ADMIN cannot deactivate a finance-role account")
+        void adminCannotDeactivateFinanceAccount() {
+            User finance = createUserWithRoles("finance-active", Role.OWNER);
+
+            assertThatThrownBy(() -> userService.toggleActive(finance.getId()))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("finance role");
+
+            assertThat(userRepository.findById(finance.getId()).orElseThrow().getActive()).isTrue();
+        }
+
+        @Test
+        @DisplayName("ADMIN cannot delete a finance-role account")
+        void adminCannotDeleteFinanceAccount() {
+            User finance = createUserWithRoles("finance-delete", Role.FINANCE_CONTROLLER);
+
+            assertThatThrownBy(() -> userService.delete(finance.getId()))
+                    .isInstanceOf(FinanceRoleAssignmentException.class)
+                    .hasMessageContaining("finance role");
+
+            assertThat(userRepository.findById(finance.getId())).isPresent();
+        }
+
+        @Test
+        @DisplayName("ADMIN can still edit a non-finance account without changing its roles")
+        void adminCanEditNonFinanceAccount() {
+            User target = createUserWithRoles("plain-target", Role.STAFF);
+            User updateData = buildUpdateData(target);
+            updateData.setFullName("Plain Target Updated");
+
+            User updated = userService.update(target.getId(), updateData, Set.of(Role.STAFF));
+
+            assertThat(updated.getFullName()).isEqualTo("Plain Target Updated");
+            assertThat(updated.getRoles()).containsExactly(Role.STAFF);
+        }
+    }
+
+    @Nested
     @DisplayName("Count Operations")
     class CountOperationsTests {
 
@@ -525,6 +682,17 @@ class UserServiceTest {
     private User createTestUser() {
         User user = buildTestUser();
         return userService.create(user, Set.of(Role.STAFF));
+    }
+
+    private User createUserWithRoles(String username, Role... roles) {
+        User user = new User();
+        user.setUsername(username);
+        user.setPassword(passwordEncoder.encode("password123"));
+        user.setFullName("Test " + username);
+        user.setEmail(username + "@test.com");
+        user.setActive(true);
+        user.setRoles(Set.of(roles), "system");
+        return userRepository.save(user);
     }
 
     private User buildTestUser() {

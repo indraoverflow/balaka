@@ -1,9 +1,11 @@
 package com.artivisi.accountingfinance.controller;
 
 import com.artivisi.accountingfinance.entity.User;
+import com.artivisi.accountingfinance.exception.FinanceRoleAssignmentException;
 import com.artivisi.accountingfinance.util.FormUtils;
 import com.artivisi.accountingfinance.enums.AuditEventType;
 import com.artivisi.accountingfinance.enums.Role;
+import com.artivisi.accountingfinance.security.CurrentUser;
 import com.artivisi.accountingfinance.security.PasswordValidator;
 import com.artivisi.accountingfinance.security.Permission;
 import com.artivisi.accountingfinance.service.DeviceAuthService;
@@ -30,8 +32,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -162,9 +166,20 @@ public class UserController {
             user.setPassword(password);
             userService.create(user, roles);
             securityAuditService.log(AuditEventType.USER_CREATED,
-                    "Created user: " + user.getUsername() + " with roles: " + roles);
+                    "Created user: " + user.getUsername() + " with roles: " + auditRoles(roles));
             redirectAttributes.addFlashAttribute(ATTR_SUCCESS_MESSAGE, "Pengguna berhasil dibuat: " + user.getUsername());
             return REDIRECT_USERS;
+        } catch (FinanceRoleAssignmentException e) {
+            Set<Role> attemptedRoles = selectedRoleNames != null ?
+                    Arrays.stream(selectedRoleNames).map(Role::valueOf).collect(Collectors.toSet()) :
+                    new HashSet<>();
+            securityAuditService.log(AuditEventType.USER_CREATED,
+                    "Rejected user creation by " + CurrentUser.name()
+                            + " with roles: " + auditRoles(attemptedRoles) + " - " + e.getMessage(), false);
+            model.addAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
+            model.addAttribute(ATTR_ROLES, Role.values());
+            model.addAttribute(ATTR_SELECTED_ROLES, attemptedRoles);
+            return VIEW_FORM;
         } catch (IllegalArgumentException e) {
             model.addAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
             model.addAttribute(ATTR_ROLES, Role.values());
@@ -215,30 +230,41 @@ public class UserController {
             return VIEW_FORM;
         }
 
+        Set<Role> roles = selectedRoleNames != null ?
+                Arrays.stream(selectedRoleNames).map(Role::valueOf).collect(Collectors.toSet()) :
+                new HashSet<>();
+
+        if (roles.isEmpty()) {
+            model.addAttribute(ATTR_ERROR_MESSAGE, "At least one role must be selected");
+            model.addAttribute(ATTR_ROLES, Role.values());
+            model.addAttribute(ATTR_SELECTED_ROLES, roles);
+            return VIEW_FORM;
+        }
+
+        Set<Role> previousRoles = userService.findById(id)
+                .map(User::getRoles)
+                .orElse(new HashSet<>());
+
         try {
-            Set<Role> roles = selectedRoleNames != null ?
-                    Arrays.stream(selectedRoleNames).map(Role::valueOf).collect(Collectors.toSet()) :
-                    new HashSet<>();
-
-            if (roles.isEmpty()) {
-                model.addAttribute(ATTR_ERROR_MESSAGE, "At least one role must be selected");
-                model.addAttribute(ATTR_ROLES, Role.values());
-                model.addAttribute(ATTR_SELECTED_ROLES, roles);
-                return VIEW_FORM;
-            }
-
             User user = toEntity(form);
             userService.update(id, user, roles);
             securityAuditService.log(AuditEventType.USER_UPDATED,
-                    "Updated user: " + user.getUsername() + AUDIT_ID_SUFFIX + id + ") with roles: " + roles);
+                    "Updated user: " + user.getUsername() + AUDIT_ID_SUFFIX + id + ") roles: "
+                            + auditRoles(previousRoles) + " -> " + auditRoles(roles) + " (actor: " + CurrentUser.name() + ")");
             redirectAttributes.addFlashAttribute(ATTR_SUCCESS_MESSAGE, "Pengguna berhasil diperbarui: " + user.getUsername());
             return REDIRECT_USERS_PREFIX + id;
+        } catch (FinanceRoleAssignmentException e) {
+            securityAuditService.log(AuditEventType.USER_UPDATED,
+                    "Rejected role change for user id " + id + " by " + CurrentUser.name()
+                            + ": roles " + auditRoles(previousRoles) + " -> " + auditRoles(roles) + " - " + e.getMessage(), false);
+            model.addAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
+            model.addAttribute(ATTR_ROLES, Role.values());
+            model.addAttribute(ATTR_SELECTED_ROLES, roles);
+            return VIEW_FORM;
         } catch (IllegalArgumentException e) {
             model.addAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
             model.addAttribute(ATTR_ROLES, Role.values());
-            model.addAttribute(ATTR_SELECTED_ROLES, selectedRoleNames != null ?
-                    Arrays.stream(selectedRoleNames).map(Role::valueOf).collect(Collectors.toSet()) :
-                    new HashSet<>());
+            model.addAttribute(ATTR_SELECTED_ROLES, roles);
             return VIEW_FORM;
         }
     }
@@ -278,7 +304,17 @@ public class UserController {
             return VIEW_CHANGE_PASSWORD;
         }
 
-        userService.changePassword(id, newPassword);
+        try {
+            userService.changePassword(id, newPassword);
+        } catch (FinanceRoleAssignmentException e) {
+            securityAuditService.log(AuditEventType.PASSWORD_CHANGED,
+                    "Rejected password change for user: " + user.getUsername()
+                            + AUDIT_ID_SUFFIX + id + ") by " + CurrentUser.name()
+                            + " - " + e.getMessage(), false);
+            model.addAttribute("user", user);
+            model.addAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
+            return VIEW_CHANGE_PASSWORD;
+        }
         securityAuditService.log(AuditEventType.PASSWORD_CHANGED,
                 "Password changed for user: " + user.getUsername() + AUDIT_ID_SUFFIX + id + ")");
         redirectAttributes.addFlashAttribute(ATTR_SUCCESS_MESSAGE, "Password berhasil diubah");
@@ -291,7 +327,16 @@ public class UserController {
         User user = userService.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(USER_NOT_FOUND + id));
         Boolean wasActive = user.getActive();
-        userService.toggleActive(id);
+        try {
+            userService.toggleActive(id);
+        } catch (FinanceRoleAssignmentException e) {
+            securityAuditService.log(AuditEventType.USER_STATUS_CHANGED,
+                    "Rejected status change for user: " + user.getUsername()
+                            + AUDIT_ID_SUFFIX + id + ") by " + CurrentUser.name()
+                            + " - " + e.getMessage(), false);
+            redirectAttributes.addFlashAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
+            return REDIRECT_USERS_PREFIX + id;
+        }
         String fromStatus = Boolean.TRUE.equals(wasActive) ? STATUS_ACTIVE : STATUS_INACTIVE;
         String toStatus = Boolean.TRUE.equals(wasActive) ? STATUS_INACTIVE : STATUS_ACTIVE;
         securityAuditService.log(AuditEventType.USER_STATUS_CHANGED,
@@ -343,9 +388,27 @@ public class UserController {
                     "Deleted user: " + username + AUDIT_ID_SUFFIX + id + ")");
             redirectAttributes.addFlashAttribute(ATTR_SUCCESS_MESSAGE, "Pengguna berhasil dihapus");
             return REDIRECT_USERS;
+        } catch (FinanceRoleAssignmentException e) {
+            securityAuditService.log(AuditEventType.USER_DELETED,
+                    "Rejected deletion of user id " + id + " by " + CurrentUser.name()
+                            + " - " + e.getMessage(), false);
+            redirectAttributes.addFlashAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
+            return REDIRECT_USERS_PREFIX + id;
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
             return REDIRECT_USERS_PREFIX + id;
         }
+    }
+
+    /**
+     * Stable, sorted rendering of a role set for audit details. Sets reach this
+     * controller from JPA (HashSet) and from the form, so iteration order is not
+     * guaranteed; sorting keeps the audit trail reproducible.
+     */
+    private static String auditRoles(Collection<Role> roles) {
+        if (roles == null) {
+            return "[]";
+        }
+        return new TreeSet<>(roles).toString();
     }
 }

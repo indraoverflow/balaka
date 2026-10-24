@@ -2,8 +2,10 @@ package com.artivisi.accountingfinance.service;
 
 import com.artivisi.accountingfinance.entity.User;
 import com.artivisi.accountingfinance.enums.Role;
+import com.artivisi.accountingfinance.exception.FinanceRoleAssignmentException;
 import com.artivisi.accountingfinance.repository.UserRepository;
 import com.artivisi.accountingfinance.security.CurrentUser;
+import com.artivisi.accountingfinance.security.FinanceRolePolicy;
 import com.artivisi.accountingfinance.security.LogSanitizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,6 +56,12 @@ public class UserService {
 
     @Transactional
     public User create(User user, Set<Role> roles) {
+        if (FinanceRolePolicy.containsFinanceRole(roles)
+                && !FinanceRolePolicy.actorHoldsFinanceAuthority()) {
+            throw new FinanceRoleAssignmentException(
+                    "Only an OWNER or FINANCE_CONTROLLER can grant finance roles (OWNER, FINANCE_CONTROLLER).");
+        }
+
         // Validate unique constraints
         if (userRepository.existsByUsername(user.getUsername())) {
             throw new IllegalArgumentException("Username already exists: " + user.getUsername());
@@ -79,6 +87,27 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(USER_NOT_FOUND + id));
 
+        Set<Role> currentRoles = user.getRoles();
+        String currentUser = getCurrentUsername();
+
+        // Separation of duties: nobody changes their own roles, and only an actor who
+        // already holds finance authority may manage a finance-role account or move a
+        // finance role on/off any account. See FinanceRolePolicy.
+        if (user.getUsername().equals(currentUser) && !currentRoles.equals(roles)) {
+            throw new FinanceRoleAssignmentException(
+                    "You cannot change the roles of your own account; another authorized user must do it.");
+        }
+        if (FinanceRolePolicy.containsFinanceRole(currentRoles)
+                && !FinanceRolePolicy.actorHoldsFinanceAuthority()) {
+            throw new FinanceRoleAssignmentException(
+                    "Only an OWNER or FINANCE_CONTROLLER can manage an account that holds a finance role.");
+        }
+        Set<Role> changedFinanceRoles = FinanceRolePolicy.changedFinanceRoles(currentRoles, roles);
+        if (!changedFinanceRoles.isEmpty() && !FinanceRolePolicy.actorHoldsFinanceAuthority()) {
+            throw new FinanceRoleAssignmentException(
+                    "Only an OWNER or FINANCE_CONTROLLER can grant or remove finance roles: " + changedFinanceRoles);
+        }
+
         // Check username uniqueness if changed
         if (!user.getUsername().equals(updated.getUsername()) &&
             userRepository.existsByUsername(updated.getUsername())) {
@@ -99,7 +128,6 @@ public class UserService {
         user.setActive(updated.getActive());
 
         // Update roles
-        String currentUser = getCurrentUsername();
         user.setRoles(roles, currentUser);
 
         User savedUser = userRepository.save(user);
@@ -112,6 +140,8 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(USER_NOT_FOUND + id));
 
+        requireFinanceAuthorityForFinanceAccount(user, "change the password of");
+
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
         log.info("Changed password for user: {}", LogSanitizer.username(user.getUsername()));
@@ -122,6 +152,8 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(USER_NOT_FOUND + id));
 
+        requireFinanceAuthorityForFinanceAccount(user, "change the status of");
+
         user.setActive(!user.getActive());
         userRepository.save(user);
         log.info("Toggled active status for user: {} to {}", LogSanitizer.username(user.getUsername()), user.getActive());
@@ -131,6 +163,8 @@ public class UserService {
     public void delete(UUID id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(USER_NOT_FOUND + id));
+
+        requireFinanceAuthorityForFinanceAccount(user, "delete");
 
         // Prevent self-deletion
         String currentUser = getCurrentUsername();
@@ -150,6 +184,15 @@ public class UserService {
     @Transactional(readOnly = true)
     public long count() {
         return userRepository.count();
+    }
+
+    private void requireFinanceAuthorityForFinanceAccount(User user, String action) {
+        if (FinanceRolePolicy.containsFinanceRole(user.getRoles())
+                && !FinanceRolePolicy.actorHoldsFinanceAuthority()) {
+            throw new FinanceRoleAssignmentException(
+                    "Only an OWNER or FINANCE_CONTROLLER can " + action
+                            + " an account that holds a finance role.");
+        }
     }
 
     private String getCurrentUsername() {
