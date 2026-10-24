@@ -110,6 +110,11 @@ nginx_gzip_min_length: 1024
 # Store this key securely (e.g., password manager, vault)
 # document_encryption_key: "BASE64_ENCODED_32_BYTE_KEY"
 
+# Remember-Me Signing Key
+# Required in production. Generate with: openssl rand -base64 32
+# Rotating this key invalidates existing remember-me cookies (users log in again).
+# app_remember_me_key: "BASE64_ENCODED_RANDOM_KEY"
+
 # Telegram Bot Configuration (optional)
 # IMPORTANT: If telegram_bot_enabled is true, telegram_webhook_secret is REQUIRED
 # The application will fail to start without it for security reasons

@@ -91,12 +91,17 @@ public class SecurityConfig {
                 .defaultSuccessUrl("/dashboard", false)
                 .failureHandler(loginFailureHandler(securityAuditService))
                 .permitAll()
-            )
-            .rememberMe(remember -> remember
+            );
+
+        if (rememberMeKey != null && !rememberMeKey.isBlank()) {
+            http.rememberMe(remember -> remember
                 .key(rememberMeKey)
                 .tokenValiditySeconds(604800) // 7 days
                 .rememberMeParameter("remember-me")
-            )
+            );
+        }
+
+        http
             .logout(logout -> logout
                 .logoutSuccessUrl("/login?logout")
                 .deleteCookies("remember-me")
