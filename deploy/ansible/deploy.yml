@@ -19,10 +19,12 @@
         msg: "admin_password_plain is not set or uses default value"
       when: admin_password_plain is not defined or admin_password_plain == 'CHANGE_THIS_ADMIN_PASSWORD'
 
-    - name: Validate app_remember_me_key is set (security)
-      ansible.builtin.fail:
-        msg: "app_remember_me_key is required. Generate one with: openssl rand -base64 32"
-      when: app_remember_me_key is not defined or app_remember_me_key | length == 0 or app_remember_me_key == 'dev-remember-me-key'
+    - name: Validate production secrets before deployment (security)
+      ansible.builtin.import_tasks:
+        file: "{{ playbook_dir }}/tasks/validate-production-secrets.yml"
+      tags:
+        - always
+        - preflight
 
     - name: Generate bcrypt hash for admin password
       ansible.builtin.set_fact:

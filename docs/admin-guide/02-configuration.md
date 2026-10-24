@@ -33,15 +33,24 @@ SSL mode `require` memastikan koneksi database terenkripsi. Tidak ada fallback k
 
 | Property | Environment Variable | Keterangan |
 |----------|---------------------|------------|
-| `app.encryption.key` | `APP_ENCRYPTION_KEY` | Kunci enkripsi AES-256-GCM untuk field PII |
+| `app.encryption.key` | `APP_ENCRYPTION_KEY` | Kunci enkripsi AES-256-GCM untuk field PII dan dokumen (wajib di production) |
+| `app.remember-me.key` | `APP_REMEMBER_ME_KEY` | Kunci penandatanganan cookie remember-me (wajib di production) |
 
-Generate encryption key:
+Generate kedua key:
 
 ```bash
 openssl rand -base64 32
 ```
 
-**Kritis:** Simpan key ini di tempat aman. Jika hilang, data PII yang terenkripsi tidak bisa didekripsi.
+`site.yml` dan `deploy.yml` menolak berjalan jika `document_encryption_key`
+atau `app_remember_me_key` kosong/tidak valid, dan guard aplikasi menolak
+startup di profile `production` bila nilainya tidak memenuhi aturan.
+
+**Kritis:** Simpan key ini di tempat aman. Jika `APP_ENCRYPTION_KEY` hilang,
+data PII yang terenkripsi tidak bisa didekripsi. Rotasi
+`APP_ENCRYPTION_KEY` membuat data lama tidak terbaca kecuali dilakukan
+re-enkripsi. Rotasi `APP_REMEMBER_ME_KEY` hanya membatalkan cookie remember-me
+(pengguna login ulang).
 
 ## Telegram Bot
 
