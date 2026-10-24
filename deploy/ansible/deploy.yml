@@ -77,6 +77,14 @@
         group: "{{ app_user }}"
         mode: "0600"
 
+    - name: Update secure environment file
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/roles/app/templates/env.conf.j2"
+        dest: "/opt/{{ app_name }}/env.conf"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0600"
+
     - name: Copy jar to server
       ansible.builtin.copy:
         src: "{{ jar_files.files[0].path }}"
