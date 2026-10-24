@@ -1,6 +1,7 @@
 package com.artivisi.accountingfinance.entity;
 
 import com.artivisi.accountingfinance.enums.AccountType;
+import com.artivisi.accountingfinance.enums.CashBankSource;
 import com.artivisi.accountingfinance.enums.NormalBalance;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -81,6 +82,14 @@ public class ChartOfAccount extends BaseEntity {
      */
     @Column(name = "is_cash_bank", nullable = false)
     private Boolean isCashBank = false;
+
+    /**
+     * Why {@link #isCashBank} is true. Only {@link CashBankSource#BANK_LINK}
+     * flags are cleared automatically when the last bank account unlinks.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cash_bank_source", length = 20)
+    private CashBankSource cashBankSource;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;

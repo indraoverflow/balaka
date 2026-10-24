@@ -2,9 +2,12 @@ package com.artivisi.accountingfinance.controller;
 
 import com.artivisi.accountingfinance.entity.ChartOfAccount;
 import com.artivisi.accountingfinance.enums.AccountType;
+import com.artivisi.accountingfinance.enums.AuditEventType;
 import com.artivisi.accountingfinance.enums.NormalBalance;
+import com.artivisi.accountingfinance.exception.InvalidCashBankAccountException;
 import com.artivisi.accountingfinance.security.Permission;
 import com.artivisi.accountingfinance.service.ChartOfAccountService;
+import com.artivisi.accountingfinance.service.SecurityAuditService;
 import com.artivisi.accountingfinance.util.FormUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -45,6 +48,7 @@ public class ChartOfAccountsController {
     private static final String REDIRECT_ACCOUNTS = "redirect:/accounts";
 
     private final ChartOfAccountService chartOfAccountService;
+    private final SecurityAuditService securityAuditService;
 
     /**
      * Typeahead search for account pickers. Returns at most 10 active, non-header
@@ -97,6 +101,7 @@ public class ChartOfAccountsController {
         private Boolean isHeader;
         private Boolean permanent;
         private Boolean active;
+        private Boolean isCashBank;
         private String description;
 
         // Used by Thymeleaf for dropdown pre-selection (account.parent.id)
@@ -105,10 +110,11 @@ public class ChartOfAccountsController {
 
     private ChartOfAccount toEntity(AccountForm form) {
         ChartOfAccount entity = new ChartOfAccount();
-        BeanUtils.copyProperties(form, entity, "id", "parent", "isHeader", "permanent", "active");
+        BeanUtils.copyProperties(form, entity, "id", "parent", "isHeader", "permanent", "active", "isCashBank");
         entity.setIsHeader(FormUtils.checkboxValue(form.getIsHeader()));
         entity.setPermanent(FormUtils.checkboxValue(form.getPermanent()));
         entity.setActive(FormUtils.checkboxValue(form.getActive()));
+        entity.setIsCashBank(FormUtils.checkboxValue(form.getIsCashBank()));
         return entity;
     }
 
@@ -170,6 +176,19 @@ public class ChartOfAccountsController {
                 account.setParent(parent);
             }
             chartOfAccountService.create(account);
+            if (Boolean.TRUE.equals(account.getIsCashBank())) {
+                securityAuditService.log(AuditEventType.SETTINGS_CHANGE,
+                        "Chart of account marked as cash/bank: " + account.getAccountCode()
+                                + " - " + account.getAccountName());
+            }
+        } catch (InvalidCashBankAccountException e) {
+            bindingResult.rejectValue("isCashBank", "invalid", e.getMessage());
+            model.addAttribute(ATTR_CURRENT_PAGE, PAGE_ACCOUNTS);
+            model.addAttribute(ATTR_ACCOUNT_TYPES, AccountType.values());
+            model.addAttribute(ATTR_PARENT_ACCOUNTS, chartOfAccountService.findAll());
+            model.addAttribute(ATTR_HAS_CHILDREN, false);
+            model.addAttribute(ATTR_HAS_PARENT, parentId != null);
+            return VIEW_FORM;
         } catch (IllegalArgumentException e) {
             bindingResult.rejectValue("accountCode", "duplicate", e.getMessage());
             model.addAttribute(ATTR_CURRENT_PAGE, PAGE_ACCOUNTS);
@@ -238,6 +257,22 @@ public class ChartOfAccountsController {
                 account.setParent(existing.getParent());
             }
             chartOfAccountService.update(id, account);
+            boolean wasCash = Boolean.TRUE.equals(existing.getIsCashBank());
+            boolean isCash = Boolean.TRUE.equals(account.getIsCashBank());
+            if (wasCash != isCash) {
+                securityAuditService.log(AuditEventType.SETTINGS_CHANGE,
+                        "Chart of account cash/bank flag " + (isCash ? "set" : "cleared")
+                                + ": " + account.getAccountCode() + " - " + account.getAccountName());
+            }
+        } catch (InvalidCashBankAccountException e) {
+            bindingResult.rejectValue("isCashBank", "invalid", e.getMessage());
+            form.setId(id);
+            model.addAttribute(ATTR_CURRENT_PAGE, PAGE_ACCOUNTS);
+            model.addAttribute(ATTR_ACCOUNT_TYPES, AccountType.values());
+            model.addAttribute(ATTR_PARENT_ACCOUNTS, chartOfAccountService.findAll());
+            model.addAttribute(ATTR_HAS_CHILDREN, hasChildren);
+            model.addAttribute(ATTR_HAS_PARENT, hasParent);
+            return VIEW_FORM;
         } catch (IllegalArgumentException e) {
             bindingResult.rejectValue("accountCode", "duplicate", e.getMessage());
             form.setId(id);
@@ -273,8 +308,12 @@ public class ChartOfAccountsController {
     @PostMapping("/{id}/deactivate")
     @PreAuthorize("hasAuthority('" + Permission.ACCOUNT_EDIT + "')")
     public String deactivate(@PathVariable UUID id, RedirectAttributes redirectAttributes) {
-        chartOfAccountService.deactivate(id);
-        redirectAttributes.addFlashAttribute(ATTR_SUCCESS_MESSAGE, "Akun berhasil dinonaktifkan");
+        try {
+            chartOfAccountService.deactivate(id);
+            redirectAttributes.addFlashAttribute(ATTR_SUCCESS_MESSAGE, "Akun berhasil dinonaktifkan");
+        } catch (IllegalStateException e) {
+            redirectAttributes.addFlashAttribute(ATTR_ERROR_MESSAGE, e.getMessage());
+        }
         return REDIRECT_ACCOUNTS;
     }
 
