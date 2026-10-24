@@ -100,16 +100,27 @@ nginx_gzip_min_length: 1024
 # document_max_file_size: 10485760  # 10MB
 # document_allowed_types: "image/jpeg,image/png,image/gif,application/pdf"
 
-# Document Encryption Key (AES-256-GCM)
+# PII / Document Encryption Key (AES-256-GCM) - REQUIRED in the production profile
 # Generate with: openssl rand -base64 32
-# IMPORTANT: This key encrypts uploaded documents. If lost, documents cannot be recovered.
-# Store this key securely (e.g., password manager, vault)
+# site.yml and deploy.yml abort in pre_tasks if this is unset or is not a
+# Base64-encoded 32-byte key. PiiEncryptionProductionGuard enforces the same
+# rule at application startup; there is no bypass.
+# IMPORTANT: This key encrypts PII fields and uploaded documents. If lost, the
+# encrypted data cannot be recovered. Rotating it makes previously encrypted
+# data unreadable unless a re-encryption migration is performed first.
+# Store this key securely (password manager, vault) and never commit the real
+# value; keep it in group_vars/all.yml, which is gitignored.
 # document_encryption_key: "BASE64_ENCODED_32_BYTE_KEY"
 
-# Remember-Me Signing Key
-# Required in production. Generate with: openssl rand -base64 32
-# Rotating this key invalidates existing remember-me cookies (users log in again).
-# app_remember_me_key: "BASE64_ENCODED_RANDOM_KEY"
+# Remember-Me Signing Key - REQUIRED in the production profile
+# Generate with: openssl rand -base64 32
+# site.yml and deploy.yml abort in pre_tasks if this is unset, is the
+# development default, or is not a Base64-encoded 32-byte key.
+# RememberMeKeyProductionGuard enforces the same rule at application startup.
+# Rotating this key invalidates existing remember-me cookies (users must log in
+# again); it does not affect stored data.
+# Store this key securely and never commit the real value.
+# app_remember_me_key: "BASE64_ENCODED_32_BYTE_KEY"
 
 # Telegram Bot Configuration (optional)
 # IMPORTANT: If telegram_bot_enabled is true, telegram_webhook_secret is REQUIRED

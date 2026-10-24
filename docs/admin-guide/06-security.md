@@ -66,6 +66,31 @@ Field yang dienkripsi termasuk data sensitif karyawan (NIK, NPWP, nomor rekening
 - Simpan encryption key di tempat terpisah dari database
 - Jika key hilang, data PII yang terenkripsi tidak bisa dipulihkan
 - Jangan pernah mengubah key setelah ada data terenkripsi (data lama tidak akan bisa didekripsi dengan key baru)
+- Deployment (`site.yml`/`deploy.yml`) menolak berjalan jika
+  `document_encryption_key` tidak diset atau bukan Base64 32 byte
+
+## Remember-Me Signing Key
+
+Cookie remember-me ditandatangani dengan kunci terpisah:
+
+```properties
+app.remember-me.key=${APP_REMEMBER_ME_KEY:}
+```
+
+Generate key:
+
+```bash
+openssl rand -base64 32
+```
+
+**Kritis:**
+- `app_remember_me_key` wajib di production dan tidak boleh memakai default
+  development (`dev-remember-me-key`)
+- Jangan gunakan kunci yang sama dengan `document_encryption_key`
+- Rotasi kunci ini membatalkan cookie remember-me (pengguna login ulang), tetapi
+  tidak memengaruhi data tersimpan
+- Deployment (`site.yml`/`deploy.yml`) menolak berjalan jika
+  `app_remember_me_key` kosong, masih default, atau bukan Base64 32 byte
 
 ## Content Security Policy (CSP)
 

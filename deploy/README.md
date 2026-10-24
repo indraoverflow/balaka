@@ -88,6 +88,15 @@ db_password: "your-secure-db-password"
 admin_password_plain: "your-secure-admin-password"
 app_domain: "your-domain.com"  # or IP address
 
+# REQUIRED: production secrets. Generate each one with:
+#   openssl rand -base64 32
+# Both site.yml and deploy.yml stop in pre_tasks if either key is missing,
+# malformed, or (for remember-me) still the development default. Set both
+# BEFORE the first boot. Never commit the real values; group_vars/all.yml is
+# gitignored.
+document_encryption_key: "<output of: openssl rand -base64 32>"
+app_remember_me_key: "<output of: openssl rand -base64 32>"
+
 # Optional: Enable SSL
 ssl_enabled: true
 ssl_email: "your-email@example.com"
@@ -156,6 +165,35 @@ To enable receipt OCR with Google Cloud Vision:
    ```
 
 6. **Deploy**: Ansible will automatically upload the credentials to the server
+
+### Production secret requirements
+
+`site.yml` and `deploy.yml` both validate `app_remember_me_key` and
+`document_encryption_key` in `pre_tasks`, before any package installation,
+migration, file upload, or service restart. A missing or malformed key aborts
+the run with a message naming the variable and the generation command, instead
+of failing later inside the application startup guard.
+
+| Variable | Requirement | Generate with |
+|----------|-------------|---------------|
+| `document_encryption_key` | Non-empty, Base64-encoded 32 bytes (AES-256) | `openssl rand -base64 32` |
+| `app_remember_me_key` | Non-empty, not `dev-remember-me-key`, Base64-encoded 32 bytes | `openssl rand -base64 32` |
+
+Both values must be set in `group_vars/all.yml` (gitignored) before the first
+boot. Do not put them in the repository or in the inventory file.
+
+Rotation has consequences:
+
+- **`app_remember_me_key`**: rotating it invalidates existing remember-me
+  cookies, so users must log in again. Stored data is unaffected.
+- **`document_encryption_key`**: this key encrypts PII fields and uploaded
+  documents. Rotating it makes previously encrypted data unreadable unless a
+  re-encryption migration is performed first. Losing it means the encrypted
+  data cannot be recovered. Back it up separately from the database.
+
+The application guards (`RememberMeKeyProductionGuard`,
+`PiiEncryptionProductionGuard`) remain in place and fail closed at startup.
+The playbook checks are an earlier, actionable layer, not a replacement.
 
 ### 3. Run Initial Setup
 
