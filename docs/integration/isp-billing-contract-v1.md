@@ -1,10 +1,16 @@
-# FASTERNET ISP Billing ↔ Balaka Integration Contract v1 (draft)
+# FASTERNET ISP Billing ↔ Balaka Integration Contract v1.1 (draft)
 
 - Contract id: `fasternet.isp-billing/v1`
-- Status: **Draft for Finance Controller and CTO review.** No automated posting is enabled by this document.
+- Document revision: **v1.1** — incorporates the Finance Controller decision record
+  `fasternet.isp-billing/accounting-decisions-v1` (issue FAS-94, issued 2026-10-24).
+- Status: **Draft.** No automated posting is enabled by this document. The implementation gate is
+  **CLOSED** (§12) because the subscription revenue account does not yet exist in Balaka.
 - Owner: CTO for the technical contract; Finance Controller for accounting mappings and recognition rules.
-- Related: [ADR-002](./adr-002-isp-billing-boundary.md), [ADR-001](./adr-001-dashboard-read-layer.md), [dashboard contract v1](./dashboard-contract.md), FAS-21 conditions.
-- Verified Balaka revision: `fasternet/main` @ `d73cbb4a`.
+- Related: [ADR-002](./adr-002-isp-billing-boundary.md), [ADR-001](./adr-001-dashboard-read-layer.md), [dashboard contract v1](./dashboard-contract.md), FAS-21 conditions, FAS-94 decision record.
+- Verified Balaka revision: `fasternet/main` @ `d73cbb4a` (API behaviour and chart of accounts). The
+  decision record was verified by the Finance Controller against the same revision and the FAS-23/FAS-77/FAS-87 merges.
+- Precedence: where this document and the FAS-94 decision record conflict on accounting semantics,
+  **the decision record wins** until this contract is republished to match it.
 
 ## 0. Rules
 
@@ -21,7 +27,7 @@
 | Data | System of record | Read by | Written by | Change control |
 |---|---|---|---|---|
 | Subscriber profile and service address | ISP app | ISP app, dashboard | ISP app | Operator UI, audited |
-| Package and recurring/installation fee | ISP app | ISP app, dashboard | ISP app | CEO/founders approve commercial fees |
+| Package and recurring fee (installation is free) | ISP app | ISP app, dashboard | ISP app | CEO/founders approve commercial fees |
 | Subscription activation/suspension/cancellation | ISP app | ISP app, dashboard, integration | ISP app | Audited state machine |
 | Invoice, due date, arrears, dunning | ISP app | ISP app, dashboard, integration | ISP app | Audited state machine |
 | Payment notification and collection workflow | ISP app | ISP app, dashboard, integration | ISP app | Audited; evidence attached |
@@ -61,6 +67,7 @@
 | `collectionStatus` | `UNPAID`, `PARTIAL`, `PAID`, `OVERDUE`, `WRITTEN_OFF` | Derived from recorded payments and due date |
 | `accountingStatus` | `NOT_REQUIRED`, `PENDING`, `POSTED`, `FAILED`, `REVERSED` | Integration state only |
 | `settlementStatus` | `UNSETTLED`, `PARTIALLY_SETTLED`, `SETTLED` | Bank-reconciled cash state only |
+| `recognitionStatus` | `PENDING`, `RECOGNIZED`, `REVERSED`, `NOT_REQUIRED` | Deferred-revenue release state only (O-2). `PENDING` means invoiced but not yet recognised as revenue. |
 
 ### Payment
 
@@ -75,6 +82,8 @@
 **Invariants**
 
 - `invoiceStatus = ISSUED` does not imply `accountingStatus = POSTED`.
+- `invoiceStatus = ISSUED` does not imply `recognitionStatus = RECOGNIZED`. Under O-2 the invoice
+  posts a receivable against deferred revenue; revenue is recognised only when the service period is served.
 - `paymentStatus = CONFIRMED` does not imply `settlementStatus = SETTLED`.
 - `settlementStatus = SETTLED` does not imply `accountingStatus = POSTED`.
 - An installment/receipt is never marked paid merely because funds were reserved or an invoice was issued.
@@ -118,9 +127,46 @@ All events use one envelope. The payload carries only what Balaka needs to post;
 }
 ```
 
-Accounting meaning: debit subscriber receivable, credit approved revenue accounts. **Whether issuance or the service period triggers revenue recognition is a Finance Controller decision (open item O-2).** Until it is approved, the template must encode the approved rule; the ISP app must not decide it.
+Accounting meaning (**O-1/O-2 decided**): **debit `1.1.04` Piutang Usaha / credit `2.1.04` Pendapatan
+Diterima Dimuka**. Issuance creates a receivable and deferred revenue, not revenue. The service period
+releases the deferred balance through `revenue.recognized` (§4.2). The template must encode this rule;
+the ISP app must not decide recognition timing.
 
-### 4.2 `payment.recorded`
+**Installation is free** (framework D3/A4, O-2). There is no installation line, no installation revenue
+account and no installation template. The connection cost is a company cost, not a subscriber charge.
+An `installation` line in an event is a contract validation error. If paid installation is ever
+reintroduced it requires a new CEO/founder decision and a new O-1/O-2 mapping before any posting.
+
+### 4.2 `revenue.recognized` — new in v1.1, **UNCONFIGURED — DO NOT IMPLEMENT**
+
+```json
+{
+  "invoiceId": "uuid",
+  "invoiceNumber": "INV-2026-11-0001",
+  "subscriberId": "uuid",
+  "servicePeriod": { "from": "2026-11-01", "to": "2026-11-30" },
+  "recognizedAt": "2026-11-30",
+  "currency": "IDR",
+  "amount": "250000.00",
+  "reason": "SERVICE_PERIOD_END"
+}
+```
+
+Accounting meaning (O-2): **debit `2.1.04` Pendapatan Diterima Dimuka / credit the approved
+subscription revenue account**. This is the only event that recognises subscription revenue.
+
+**Gate:** the subscription revenue account does not exist in the verified Balaka chart (`4.1.01`–`4.1.04`
+are consulting/development/training/goods, not internet subscription). The Finance Controller must
+provision a dedicated account under `4.1` with a founder-authorised COA change and effective date, then
+issue an O-1 revision naming it. Until then this event, its template and any monthly recognition run are
+**disabled**. The event must not be posted to an arbitrary existing revenue account.
+
+Timing rules (O-2/O-4): one recognition event per invoice at the end of the service month; for a
+mid-month suspension/cancellation, release only the served portion and credit the unserved deferred
+portion through a credit note; if an invoice is ever issued after the service is fully delivered
+(arrears), recognise at invoice date as an approved exception.
+
+### 4.3 `payment.recorded`
 
 ```json
 {
@@ -138,9 +184,21 @@ Accounting meaning: debit subscriber receivable, credit approved revenue account
 }
 ```
 
-Accounting meaning: debit the approved bank/cash account, credit subscriber receivable. Only a **verified** payment may be posted under the approved automation policy. An unverified claim may be posted as a receivable reduction only if the Finance Controller explicitly approves that intermediate rule (open item O-3).
+Accounting meaning (**O-3 decided**): **debit the confirmed cash/bank account
+(`1.1.01` Kas, `1.1.02` Bank BCA or `1.1.03` Bank BNI) / credit `1.1.04` Piutang Usaha**.
 
-### 4.3 `credit_note.issued`
+Only `evidenceStatus = VERIFIED` may post. `RECORDED` and `ATTACHED` have **zero GL effect** and do not
+reduce AR; there is no provisional AR reduction, cash-in-transit account or netting. Verification is a
+human action by the Finance Controller or a delegated accountant; the ISP app may set `ATTACHED` but
+never `VERIFIED`.
+
+Mandatory evidence for `VERIFIED` (O-3): a bank transfer needs the bank statement/transfer proof with
+amount, value date and a sender/reference traceable to the subscriber and invoice, matched to the ISP
+receipt; a transfer receipt not yet on the bank statement is only `ATTACHED`. Cash needs a signed
+`kuitansi` (receipt number, collector, date, amount, subscriber, invoice) included in the daily cash
+count, plus the deposit slip if banked. `OTHER_APPROVED` is not approved by this contract.
+
+### 4.4 `credit_note.issued`
 
 ```json
 {
@@ -154,9 +212,14 @@ Accounting meaning: debit the approved bank/cash account, credit subscriber rece
 }
 ```
 
-Accounting meaning: reverse the approved revenue/AR portion. A credit note is never a payment and never increases cash.
+Accounting meaning (**O-6 mechanics decided**): reverse the account originally credited by the invoice —
+`2.1.04` Pendapatan Diterima Dimuka while the revenue is still deferred, or the approved subscription
+revenue account after recognition — and **credit `1.1.04` Piutang Usaha**. The credit note must
+reference the original `invoiceId` and reason, and cannot exceed the original invoice. A separate contra
+account is not required. A credit note is never a payment and never increases cash. Because the
+subscription revenue account is unconfigured, the credit-note template is **disabled**.
 
-### 4.4 `invoice.voided` / `payment.voided`
+### 4.5 `invoice.voided` / `payment.voided`
 
 Void events reference the original ISP record and the original Balaka transaction. Balaka void/reversal is used; the ISP record keeps its history. Corrections are new events referencing the original; posted history is not deleted.
 
@@ -166,19 +229,29 @@ The adapter resolves, from versioned configuration, a Balaka `templateId` per ev
 
 | Event | Template (name is illustrative; id is configured) | Debit | Credit | Status |
 |---|---|---|---|---|
-| `invoice.issued` | `FASTERNET — Subscription invoice` | Subscriber receivable (FC-assigned code) | Monthly subscription revenue (FC-assigned code) | **Unconfigured** |
-| `invoice.issued` (installation line) | `FASTERNET — Installation invoice` | Subscriber receivable | Installation revenue | **Unconfigured** |
-| `payment.recorded` | `FASTERNET — Collection` | Operating bank/cash (FC-assigned, `is_cash_bank`) | Subscriber receivable | **Unconfigured** |
-| `credit_note.issued` | `FASTERNET — Credit note` | Revenue contra / sales adjustment (FC-assigned) | Subscriber receivable | **Unconfigured** |
-| `payment.voided` | reversal via Balaka void, or `FASTERNET — Collection reversal` | Subscriber receivable | Operating bank/cash | **Unconfigured** |
+| `invoice.issued` | `FASTERNET — Subscription invoice (deferred)` | `1.1.04` Piutang Usaha | `2.1.04` Pendapatan Diterima Dimuka | **Accounts decided; template not yet configured** |
+| `revenue.recognized` | `FASTERNET — Subscription revenue release` | `2.1.04` Pendapatan Diterima Dimuka | Subscription revenue account | **DISABLED — revenue account does not exist (O-1)** |
+| `payment.recorded` | `FASTERNET — Collection` | `1.1.01`/`1.1.02`/`1.1.03` (confirmed cash/bank) | `1.1.04` Piutang Usaha | **Accounts decided; `OPERATING` slot unconfirmed** |
+| `credit_note.issued` | `FASTERNET — Credit note` | `2.1.04` (pre-recognition) or subscription revenue (post-recognition) | `1.1.04` Piutang Usaha | **DISABLED — revenue account does not exist** |
+| `payment.voided` | reversal via Balaka void, or `FASTERNET — Collection reversal` | `1.1.04` Piutang Usaha | Confirmed cash/bank | **Accounts decided; template not yet configured** |
+
+Installation revenue and its template are **removed**: installation is free (O-2).
 
 Rules:
 
+- Only Balaka codes may be posted. The framework's 1000-series management/pool codes are never sent to
+  `POST /api/transactions`.
 - Every template must be versioned in Balaka; the contract pins the template UUID and a human-readable name.
 - Changing a template or account mapping is a Finance-Controller-approved change with an effective date. It must not retroactively alter posted transactions.
-- The `OPERATING` / `KUR_RESERVE` bank slot values, if used, are a fixed allowlist; the ISP app cannot add new slots.
-- The integration must refuse to post if the configured template is missing, inactive, or belongs to a closed period.
-- Tax lines, if any, are computed and mapped by Balaka per the approved configuration; the ISP app does not calculate PPN/PPh.
+- The collection bank slot is a fixed allowlist `{1.1.01, 1.1.02, 1.1.03}`; the ISP app cannot add slots.
+  `KUR_RESERVE` is **not** a GL account and is **not** an ISP posting destination — the reserve is a
+  logical earmark tracked by FAS-23 `kur_reserve_entries`. ISP collections never post to a reserve slot.
+- The specific FASTERNET `OPERATING` account is unconfirmed until the Finance Controller verifies the
+  actual bank account in writing. Do not hard-code an assumed account.
+- The integration must refuse to post if the configured template is missing, inactive, disabled by an
+  open decision, or belongs to a closed period.
+- Tax lines: **none**. O-5 is unconfigured; `taxTotal` stays `0.00` (this is not a determination that the
+  supply is untaxed) and no PPN/PPh account is used.
 
 ## 6. Posting call
 
@@ -239,9 +312,10 @@ Run daily for the current period and as a hard gate before closing a period.
 
 | Check | Expected | Blocking? |
 |---|---|---|
-| Invoice register total for period vs POSTED subscription/installation revenue + AR movement | Equal, with each invoice traceable | Yes |
+| Invoice register total for period vs POSTED AR + deferred/released subscription revenue movement | Equal, with each invoice traceable | Yes |
 | Recorded payments vs POSTED collection transactions vs bank-reconciled receipts | Three-way; differences visible | Yes |
 | Credit notes vs posted reversals | Equal | Yes |
+| Deferred revenue: invoices posted to `2.1.04` less recognised revenue and credits | Equals the open deferred balance; recognised revenue equals served periods only | Yes |
 | Outbox: events `POSTED` vs invoices/payments in status `ISSUED`/`CONFIRMED` | No orphan, no duplicate | Yes |
 | Duplicate postings (same invoice/payment, >1 Balaka transaction) | Zero | Yes |
 | Stale/failed events | Zero unexplained; aged items listed with owner | Yes (for close) |
@@ -259,30 +333,70 @@ A discrepancy is surfaced with amount, period, source records, Balaka references
 - Audit log for subscriber/invoice/payment state changes and for every integration attempt. Audit rows contain ids, not secrets or unnecessary PII.
 - Do not expose the Balaka API directly to browsers; all calls are server-side.
 
-## 10. Open decisions (must be resolved before implementation of posting)
+## 10. Decision status (FAS-94 record, issued 2026-10-24)
 
-| Id | Decision | Owner | Default until resolved |
+The authoritative accounting annex is `fasternet.isp-billing/accounting-decisions-v1` (issue FAS-94).
+This table reflects it; the record wins on accounting semantics.
+
+| Id | Decision | Status | Owner / next action |
 |---|---|---|---|
-| O-1 | COA codes for subscriber receivable, subscription revenue, installation revenue, revenue contra, operating bank, KUR reserve bank | Finance Controller | Blocked; no posting |
-| O-2 | Revenue recognition timing (invoice date vs service period vs cash) | Finance Controller | Blocked; no posting |
-| O-3 | Whether unverified payments may reduce AR, and the evidence required | Finance Controller | No; only verified payments post |
-| O-4 | Proration, advance/arrears, partial-month and mid-cycle activation rules | Finance Controller + CEO | Unconfigured |
-| O-5 | PPN/PPh treatment and invoice/tax-document requirements | Finance Controller + adviser | Unconfigured |
-| O-6 | Discounts, credit notes, write-offs and bad-debt policy | CEO + Finance Controller | Unconfigured |
-| O-7 | Grace/suspension/cancellation timing and its billing effect | CEO | Unconfigured |
-| O-8 | Opening subscriber/AR balances and cutover date | Finance Controller + CEO | Not migrated |
-| O-9 | Automation approval (staged → automatic) | Finance Controller | Staged only |
-| O-10 | Runtime/deployment target | CTO | Existing Java/Spring/Postgres stack proposed |
+| O-1 | COA mapping | **PARTIALLY DECIDED** — AR `1.1.04`; cash `1.1.01`/`1.1.02`/`1.1.03`; subscription revenue **UNCONFIGURED** (no account); installation **not applicable**; KUR reserve is not a GL account; `OPERATING` bank account unconfirmed | FC: provision `4.1.xx` subscription revenue with founder-authorised COA change + effective date; confirm the operating bank account |
+| O-2 | Revenue recognition | **DECIDED** — subscription over the service period (advance billing); installation has no revenue (free) | CTO: `revenue.recognized` event/template remains disabled until O-1 revenue account exists |
+| O-3 | Unverified payments | **DECIDED** — no AR reduction and no cash posting until `VERIFIED`; evidence table in §4.3 | FC/accountant verifies; ISP app may only set `ATTACHED` |
+| O-4 | Proration / cycle | **MECHANICS DECIDED** — monthly calendar month, daily proration on actual days, whole-rupiah half-up rounding, advance billing | CEO: billing day, due day, activation-day billing; no reconnection fee approved |
+| O-5 | Tax (PPN/PPh) | **UNCONFIGURED — DO NOT IMPLEMENT** | FC + qualified Indonesian adviser: PKP status, rate/effective period, PPh, e-Faktur |
+| O-6 | Discounts / credit notes / write-offs / bad debt | Credit-note **mechanics decided**, posting disabled; discounts and write-offs/bad debt **UNCONFIGURED** | CEO/FC: discount policy, bad-debt policy and account; founder authorisation for write-offs |
+| O-7 | Grace / suspension / cancellation | **DECIDED** from framework §11 — reminders due/+3/+7, suspension +14; served days billable, unserved credited; cancellation ends billing | CEO: notice period, early termination, refund policy |
+| O-8 | Cutover / opening AR | **UNCONFIGURED — NOT MIGRATED** | FC + CEO: subscriber-level opening schedule, reconciled opening journal, cutover date |
+| O-9 | Automation (staged → automatic) | **NOT GRANTED — STAGED ONLY** | FC: written approval after a full staged period reconciles |
+| O-10 | Runtime/deployment target | Proposed: existing Java/Spring/Postgres stack | CTO: decide before Phase 5 implementation |
 
 ## 11. Acceptance tests (before Phase 5 exit)
 
-1. Create/issue invoice → one `invoice.issued` event → exactly one POSTED Balaka transaction with the configured accounts.
+1. Create/issue invoice → one `invoice.issued` event → exactly one POSTED Balaka transaction
+   (`Dr 1.1.04` / `Cr 2.1.04`) with the configured template. AR increases; revenue does not.
 2. Repeat the event (lost response, dispatcher restart, manual replay) → HTTP 200 replay, still exactly one transaction.
-3. Record verified payment → one collection posting; record another payment for the same invoice with the same `paymentId` → no second posting.
-4. Unverified payment → does not post cash; visible as pending/staged.
-5. Credit note → one reversal posting; original transaction remains; AR nets correctly.
-6. Closed-period event → posting rejected, event `FAILED`, operator sees the reason; no backdating.
-7. Balaka 401/403/400/500/timeout → distinct outbox states and retry behaviour; no lost event.
-8. Period reconciliation: ISP invoice/payment/credit-note totals equal Balaka POSTED AR/revenue/bank movements; introduced discrepancy is detected.
-9. Attempt to write to Balaka's database from the ISP app → no such code path/credential exists.
-10. Dashboard shows ISP metrics only from the ISP read API and accounting figures only from Balaka, each with status, period and freshness.
+3. An `invoice.issued` event containing an installation line is rejected by validation (installation is free).
+4. A `revenue.recognized` event is refused while O-1 lacks a subscription revenue account; no fallback to
+   an unrelated revenue account.
+5. Record verified payment → one collection posting (`Dr` confirmed cash/bank / `Cr 1.1.04`); repeat the
+   same `paymentId` → no second posting.
+6. Unverified payment (`RECORDED`/`ATTACHED`) → no cash posting, no AR reduction; visible in the collection queue.
+7. Credit note → one reversal posting; original transaction remains; AR nets correctly; a credit note never increases cash.
+8. Closed-period event → posting rejected, event `FAILED`, operator sees the reason; no backdating.
+9. Balaka 401/403/400/500/timeout → distinct outbox states and retry behaviour; no lost event.
+10. Period reconciliation: ISP invoice/payment/credit-note totals equal Balaka POSTED AR, deferred revenue,
+    recognised revenue and bank movements; introduced discrepancy is detected and blocks close.
+11. Attempt to write to Balaka's database from the ISP app → no such code path/credential exists.
+12. Dashboard shows ISP metrics only from the ISP read API and accounting figures only from Balaka, each with status, period and freshness.
+
+## 12. Implementation gate
+
+**Gate status: CLOSED.** O-2 and O-3 are decided, but O-1 is only partially decided: there is no
+subscription revenue account in the verified chart. Therefore:
+
+- No implementation issue for ISP posting may be opened on the strength of this contract.
+- No template may be activated; no automatic posting; no ledger entry.
+- The ISP application may be built and run for operational data (subscribers, packages, invoices,
+  collections, evidence capture) but it must not post to Balaka and the dashboard must show
+  subscriber/AR figures as `unavailable` until cutover is approved.
+
+### Required next actions (from the FAS-94 record)
+
+| # | Action | Owner | Blocks |
+|---|---|---|---|
+| 1 | Provision a dedicated subscription revenue account under `4.1` (founder-authorised COA change, effective date), then issue an O-1 revision naming it | Finance Controller + founder authorisation | O-1, O-2 posting, credit notes |
+| 2 | Confirm the actual FASTERNET operating bank account and the collection slot | Finance Controller | Automatic collection |
+| 3 | Decide billing day/due day, discounts, cancellation/refund/termination terms | CEO | O-4, O-6, O-7 commercial config |
+| 4 | Confirm tax position with a qualified Indonesian adviser (legal basis + effective period) | Finance Controller + adviser | O-5 |
+| 5 | Build the subscriber/AR opening schedule and agree the cutover date | Finance Controller + CEO | O-8 |
+| 6 | Approve automation only after a full staged period reconciles | Finance Controller | O-9 |
+| 7 | Decide the runtime/deployment target for the ISP application | CTO | O-10 |
+
+### What this contract does not authorize
+
+- No money movement, bank transfer, purchase or vendor commitment.
+- No chart-of-accounts creation, rename, flag change or deletion.
+- No journal entry, posting, opening balance or write-off.
+- No tax rate, tax invoice, or statutory accounting-framework assertion.
+- No package price, subscriber count, or estimated opening balance.

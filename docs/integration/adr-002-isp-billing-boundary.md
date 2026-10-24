@@ -1,10 +1,10 @@
 # ADR-002 — ISP Operations/Billing is a separate bounded system that posts into Balaka through its documented API
 
-- Status: Accepted for the architecture boundary. Implementation is gated by Finance Controller sign-off on account mappings and by the approvals listed in §9.
+- Status: Accepted for the architecture boundary. Implementation is gated by Finance Controller sign-off on account mappings and by the approvals listed in §9. The accounting decision record below is issued, but the **posting gate is CLOSED** (no subscription revenue account yet).
 - Date: 2026-10-24
 - Owner: CTO
 - Deciders: CTO for technical boundary; Finance Controller for accounting semantics, account mappings and revenue/AR recognition; CEO for funding, priorities and any change to the approved target architecture.
-- Related: CTO charter §3 (target architecture), ADR-001 (dashboard read layer), `docs/integration/isp-billing-contract-v1.md`, FAS-21 conditions, FAS-49/FAS-54 dashboard contract.
+- Related: CTO charter §3 (target architecture), ADR-001 (dashboard read layer), `docs/integration/isp-billing-contract-v1.md`, FAS-21 conditions, FAS-49/FAS-54 dashboard contract, FAS-94 `fasternet.isp-billing/accounting-decisions-v1`.
 - Verified against: `fasternet/main` @ `d73cbb4a` (Balaka upstream baseline `182c32c8` plus FASTERNET merges).
 
 ## 1. Context
@@ -40,7 +40,7 @@ Checked in the checkout at `d73cbb4a`:
 1. **Separate bounded application.** Build FASTERNET ISP Operations & Billing as its own application with its **own database**. It owns subscriber, package, subscription lifecycle, invoices, collections and ISP operational metrics.
 2. **Balaka remains the only accounting system of record.** The ISP application never owns GL balances, journals, chart-of-accounts mappings, tax postings or period state. It must not create a second ledger.
 3. **Integration is API-only.** The approved write path is Balaka's documented REST API, authenticated with a dedicated `client_credentials` API client. No direct SQL, no shared tables, no shared database/schema, no reading Balaka's internal tables, and no database links.
-4. **Templates, not free-form account selection, for automated postings.** The Finance Controller approves a small, versioned set of Balaka journal templates for ISP events (subscription revenue, installation revenue, collection, credit note/refund, etc.). The ISP application submits `templateId` + amount + date + description + source. It does not send arbitrary account UUIDs on the automated path. `accountSlots` is used only where the approved template explicitly allows a bounded slot (for example, operating bank vs. KUR reserve bank), and the allowed values come from Finance-Controller-approved configuration.
+4. **Templates, not free-form account selection, for automated postings.** The Finance Controller approves a small, versioned set of Balaka journal templates for ISP events (invoice/deferred revenue, revenue release, collection, credit note/refund, etc.). Installation has no revenue and no template. The ISP application submits `templateId` + amount + date + description + source. It does not send arbitrary account UUIDs on the automated path. `accountSlots` is used only where the approved template explicitly allows a bounded slot (for example, the collection bank slot restricted to `1.1.01`/`1.1.02`/`1.1.03`), and the allowed values come from Finance-Controller-approved configuration. The KUR reserve is not a GL account and is not an ISP posting slot.
 5. **Retry-safe by construction.** Every automated ledger posting carries a deterministic `Idempotency-Key` derived from the ISP event: `fasternet:isp:{eventType}:{sourceRecordId}`. The ISP application also keeps a durable outbox row with the same key and a unique constraint, so a lost response, replay or double-click cannot double-post revenue or collections.
 6. **Staged automation.** Until the integration passes reconciliation tests for at least one complete billing period and the Finance Controller approves automation in writing, events that would touch the ledger are staged for human review and posted by an accountant. The adapter supports both modes behind a configuration flag; the default is staged.
 7. **Status separation is mandatory.** Invoice issuance, payment notification, cash receipt, bank settlement and accounting posting are separate fields with separate transitions. No status implies another. A posted invoice is not cash; a recorded payment is not bank-reconciled; a bank-confirmed receipt is not necessarily posted to the GL yet.
@@ -70,7 +70,7 @@ Checked in the checkout at `d73cbb4a`:
 The ISP application emits a small, versioned set of business events. Each event is persisted in its own outbox before any network call.
 
 ```
-ISP transaction (invoice.issued / payment.recorded / credit_note.issued)
+ISP transaction (invoice.issued / revenue.recognized / payment.recorded / credit_note.issued)
   -> ISP outbox row (unique idempotency key, status=PENDING)
   -> [staged mode] review queue -> accountant approves
   -> POST /api/transactions (Balaka template, Idempotency-Key)
@@ -116,22 +116,25 @@ Negative / constraints:
 - A failed or stale integration must be visible; silent disconnection is unacceptable.
 - Some duplication of subscriber identifiers in journal descriptions is unavoidable for traceability; this is not a second subscriber master.
 
-## 9. Open decisions and approval gates
+## 9. Decisions and approval gates
 
-These are **not** decided by this ADR and must not be invented by implementation:
+The Finance Controller decision record `fasternet.isp-billing/accounting-decisions-v1` (FAS-94, issued
+2026-10-24) is the authoritative accounting annex. **The posting gate remains CLOSED** because the
+subscription revenue account does not exist in Balaka.
 
 | Decision | Owner | Status |
 |---|---|---|
-| Selected accounting/reporting framework and revenue recognition policy | Finance Controller | Unconfigured |
-| Chart-of-accounts and journal-template mappings for subscription, installation, collection, credit note/refund | Finance Controller | Unconfigured |
-| PPN/PPh treatment of subscription and installation fees | Finance Controller with qualified adviser | Unconfigured |
-| Proration, partial-month, advance/arrears billing rules | Finance Controller + CEO | Unconfigured |
+| Accounting/reporting framework (statutory) | Finance Controller + qualified adviser | Unconfigured; SAK EMKM is not assumed |
+| Revenue recognition policy | Finance Controller | **Decided** — subscription over the service period (advance billing); installation free, no revenue |
+| Chart-of-accounts and journal-template mappings | Finance Controller | **Partial** — AR `1.1.04`, cash `1.1.01`/`02`/`03`, deferred revenue `2.1.04`; subscription revenue account unconfigured; installation not applicable; credit-note/collection templates not activated |
+| PPN/PPh treatment | Finance Controller with qualified adviser | Unconfigured — do not implement |
+| Proration, advance/arrears, rounding | Finance Controller + CEO | **Mechanics decided** — calendar month, daily proration, whole-rupiah half-up; billing/due day is CEO config |
 | Package catalogue and commercial fees | CEO / founders | Unconfigured |
-| Grace period, suspension, cancellation and bad-debt policy | CEO + Finance Controller | Unconfigured |
-| Operating and KUR-reserve bank account mapping | Finance Controller | Unconfigured |
-| Cutover date and opening AR/subscriber balances | Finance Controller + CEO | Unconfigured |
-| Automation approval (staged -> automatic posting) | Finance Controller | Not granted |
-| Runtime/toolchain and deployment target for the new app | CTO | Proposed: existing Java/Spring/Postgres stack |
+| Grace, suspension, cancellation, bad debt | CEO + Finance Controller | Grace/suspension **decided** (framework §11); cancellation terms, discounts and write-offs unconfigured |
+| Operating bank mapping and KUR reserve | Finance Controller | Cash universe confirmed; the actual `OPERATING` account is unconfirmed; KUR reserve is **not** a GL account and not an ISP posting destination |
+| Cutover date and opening AR/subscriber balances | Finance Controller + CEO | Unconfigured — not migrated |
+| Automation approval (staged -> automatic posting) | Finance Controller | **Not granted** — staged only |
+| Runtime/toolchain and deployment target | CTO | Proposed: existing Java/Spring/Postgres stack |
 
 ## 10. Validation
 
