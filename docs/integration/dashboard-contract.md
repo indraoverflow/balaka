@@ -217,9 +217,14 @@ reserve)`.
 
 ### 3.4 `GET /api/fasternet/v1/billing/summary?period=YYYY-MM`
 
-Billing aggregates from Balaka invoices and collection journals. Subscriber-level rows
-are out of scope until a subscriber model is approved. Never returns a fabricated
-subscriber count.
+**Not implemented in this contract version.** Per [ADR-002](./adr-002-isp-billing-boundary.md),
+subscriber, package, invoice and collection data belong to the separate ISP
+Operations/Billing application, not to Balaka's generic `clients`/`invoices`. Balaka must
+not grow a subscriber master. Until the ISP application exists, is integrated through the
+documented API, and its account mappings are approved by the Finance Controller, this
+endpoint is not served and the corresponding figures stay `unavailable`; see
+[`isp-billing-contract-v1.md`](./isp-billing-contract-v1.md). Never returns a fabricated
+subscriber count or billing total.
 
 ## 4. Series (charts)
 

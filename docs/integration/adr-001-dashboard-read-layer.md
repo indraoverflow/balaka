@@ -37,9 +37,12 @@ dashboard endpoint, no KUR loan master, and no subscriber billing model yet.
 5. Treat the SQLite prototype as a **view contract reference only** (which panels and
    labels exist). It stops being a data source once the endpoint is live; no code in
    Balaka reads it.
-6. Implement KUR figures in FAS-23 (loan master, verified schedule, reserve) and
-   subscriber/billing aggregates from existing `clients`/`invoices`/`transactions` or a
-   Finance-Controller-approved subscriber model. Until then they are `unavailable`.
+6. Implement KUR figures in FAS-23 (loan master, verified schedule, reserve). Subscriber
+   and billing aggregates are **not** sourced from Balaka's generic `clients`/`invoices`
+   and no subscriber master is created here: per [ADR-002](./adr-002-isp-billing-boundary.md),
+   the separate ISP Operations/Billing application is the source of truth for those
+   domains. Until that application exists and is integrated, `subscribers.*` and
+   `billing.*` stay `unavailable`.
 
 ## Reuse map
 
