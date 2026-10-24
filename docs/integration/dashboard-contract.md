@@ -381,9 +381,9 @@ projected-shortfall test or the 90-day runway condition. Therefore:
 
 | state | Meaning |
 |---|---|
-| `green` | Reserve funded to the approved target and actual cash covers the approved minimum, due date not passed |
+| `green` | Reserve funded to the approved target, actual cash covers the approved minimum, `obligation.scheduleStatus` is `verified`, and the due date has not passed. An `estimate` schedule never produces `green`. |
 | `yellow` | Reserve accumulation is behind the approved funding plan (gap, or target-reserve deficit beyond the funding-pace tolerance) |
-| `orange` | Projected cash flow may be insufficient (actual total cash below the minimum, or cash after paying the outstanding falls below the total-cash minimum, or the gap reaches the orange cutoff), **or** an unverified schedule reaches the red cutoff (red is withheld) |
+| `orange` | Actual POSTED total cash is insufficient (actual total cash is below the total-cash minimum, cash after paying the outstanding falls below the total-cash minimum, or the gap reaches the orange cutoff), **or** an unverified schedule reaches the red cutoff (red is withheld). No forward cash-flow forecast is applied in v1. |
 | `red` | The next unpaid installment is overdue, or a **verified** lender schedule shows a gap at/above the red cutoff |
 | `unconfigured` | No CEO + Finance Controller-approved threshold policy is recorded. Never rendered as green |
 | `unavailable` | Required input (obligation, reserve movements, or cash) cannot be derived. Never treated as zero |

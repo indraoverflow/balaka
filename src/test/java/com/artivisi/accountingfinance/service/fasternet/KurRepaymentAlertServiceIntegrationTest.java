@@ -133,6 +133,24 @@ class KurRepaymentAlertServiceIntegrationTest {
     }
 
     @Test
+    @DisplayName("an estimate schedule never produces green even when fully funded")
+    void estimateScheduleNeverProducesGreen() {
+        KurLoan loan = createLoan(KurLoanProvenance.FOUNDER_ESTIMATE, FIRST_DUE);
+        schedule(loan, FIRST_DUE, KurScheduleSourceKind.ESTIMATE, "estimated-row-1");
+        reserve(loan, INSTALLMENT, "reserve-1");
+        configure(loan, "0.00", "2757500.00", "0.00", "2000000.00", "2500000.00");
+        postCash(new BigDecimal("1000000000.00"));
+
+        KurAlertResponse response = alertService.evaluate(loan.getId(), AS_OF);
+
+        assertThat(response.alert().state()).isNotEqualTo("green");
+        assertThat(response.alert().reason()).contains("green is withheld");
+        assertThat(response.missing())
+                .extracting(KurAlertResponse.Missing::key)
+                .contains("kur.alert.schedule");
+    }
+
+    @Test
     @DisplayName("yellow when the reserve is behind the approved funding plan")
     void yellowWhenReserveBehindPlan() {
         KurLoan loan = createLoan(KurLoanProvenance.VERIFIED, FIRST_DUE);

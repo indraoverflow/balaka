@@ -318,6 +318,12 @@ public class KurRepaymentAlertService {
                     "Actual cash is unavailable, so payment readiness cannot be confirmed; "
                             + "missing data is not treated as zero");
         }
+        if (!obligation.scheduleVerified()) {
+            return Evaluation.of(KurAlertState.YELLOW,
+                    "Reserve appears fully funded and actual cash covers the approved minimum, but the "
+                            + "next installment's schedule is " + obligation.provenance().getJsonValue()
+                            + ", so green is withheld pending a verified lender schedule");
+        }
         return Evaluation.of(KurAlertState.GREEN,
                 "Reserve is fully funded and actual cash covers the approved minimum: "
                         + moneyString(qualifyingReserve) + " reserved against installment #"
