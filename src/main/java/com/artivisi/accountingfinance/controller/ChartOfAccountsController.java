@@ -224,6 +224,7 @@ public class ChartOfAccountsController {
                          Model model,
                          RedirectAttributes redirectAttributes) {
         ChartOfAccount existing = chartOfAccountService.findById(id);
+        boolean wasCash = Boolean.TRUE.equals(existing.getIsCashBank());
         boolean hasChildren = !existing.getChildren().isEmpty();
         boolean hasParent = existing.getParent() != null;
 
@@ -257,7 +258,6 @@ public class ChartOfAccountsController {
                 account.setParent(existing.getParent());
             }
             chartOfAccountService.update(id, account);
-            boolean wasCash = Boolean.TRUE.equals(existing.getIsCashBank());
             boolean isCash = Boolean.TRUE.equals(account.getIsCashBank());
             if (wasCash != isCash) {
                 securityAuditService.log(AuditEventType.SETTINGS_CHANGE,
