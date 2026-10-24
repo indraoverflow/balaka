@@ -16,6 +16,13 @@ public enum Role {
     OWNER("Pemilik", "Access to all business features"),
 
     /**
+     * Finance Controller - owns accounting policy and the KUR loan data.
+     * This role is intentionally separate from ADMIN: a technical administrator
+     * must not automatically hold finance-write authority.
+     */
+    FINANCE_CONTROLLER("Finance Controller", "Accounting policy, KUR loan data and financial verification"),
+
+    /**
      * Accountant - accounting operations and reports
      */
     ACCOUNTANT("Akuntan", "Accounting operations and reports"),

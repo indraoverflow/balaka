@@ -41,5 +41,13 @@ public enum AuditEventType {
     PAYROLL_EXPORT,
 
     // API operations
-    API_CALL
+    API_CALL,
+
+    // FASTERNET KUR loan write path (FAS-95)
+    KUR_LOAN_CREATE,
+    KUR_SCHEDULE_IMPORT,
+    KUR_PAYMENT_RECORD,
+    KUR_PAYMENT_REVERSE,
+    KUR_RESERVE_RECORD,
+    KUR_LOAN_VERIFY
 }

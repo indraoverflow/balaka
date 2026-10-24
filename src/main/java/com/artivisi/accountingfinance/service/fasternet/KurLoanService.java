@@ -6,16 +6,20 @@ import com.artivisi.accountingfinance.entity.KurInstallment;
 import com.artivisi.accountingfinance.entity.KurLoan;
 import com.artivisi.accountingfinance.entity.KurPayment;
 import com.artivisi.accountingfinance.entity.KurReserveEntry;
+import com.artivisi.accountingfinance.enums.AuditEventType;
 import com.artivisi.accountingfinance.enums.KurInstallmentStatus;
 import com.artivisi.accountingfinance.enums.KurLoanProvenance;
 import com.artivisi.accountingfinance.enums.KurReserveEntryKind;
 import com.artivisi.accountingfinance.enums.KurScheduleSourceKind;
+import com.artivisi.accountingfinance.exception.KurResourceNotFoundException;
 import com.artivisi.accountingfinance.repository.ChartOfAccountRepository;
+import com.artivisi.accountingfinance.repository.DocumentRepository;
 import com.artivisi.accountingfinance.repository.KurInstallmentRepository;
 import com.artivisi.accountingfinance.repository.KurLoanRepository;
 import com.artivisi.accountingfinance.repository.KurPaymentRepository;
 import com.artivisi.accountingfinance.repository.KurReserveEntryRepository;
 import com.artivisi.accountingfinance.service.DashboardService;
+import com.artivisi.accountingfinance.service.SecurityAuditService;
 import com.artivisi.accountingfinance.util.KurMoneyMath;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -60,6 +64,8 @@ public class KurLoanService {
     private final KurReserveEntryRepository reserveEntryRepository;
     private final ChartOfAccountRepository chartOfAccountRepository;
     private final DashboardService dashboardService;
+    private final DocumentRepository documentRepository;
+    private final SecurityAuditService securityAuditService;
 
     // ------------------------------------------------------------------
     // Commands
@@ -118,6 +124,16 @@ public class KurLoanService {
     ) {
     }
 
+    /** Whether the write created a row or returned the row an earlier retry created. */
+    public record ScheduleImportOutcome(KurInstallment installment, boolean created) {
+    }
+
+    public record PaymentOutcome(KurPayment payment, boolean created) {
+    }
+
+    public record ReserveOutcome(KurReserveEntry entry, boolean created) {
+    }
+
     // ------------------------------------------------------------------
     // Writes
     // ------------------------------------------------------------------
@@ -139,6 +155,8 @@ public class KurLoanService {
             throw new IllegalArgumentException(
                     "A verified loan requires both the signed agreement and the lender schedule to be attached");
         }
+        requireDocumentIfPresent(command.agreementDocumentId(), "agreementDocumentId");
+        requireDocumentIfPresent(command.scheduleDocumentId(), "scheduleDocumentId");
 
         KurLoan loan = new KurLoan();
         loan.setLender(command.lender().trim());
@@ -161,7 +179,15 @@ public class KurLoanService {
         loan.setScheduleDocumentId(command.scheduleDocumentId());
         loan.setProvenance(provenance);
         loan.setNotes(trimToNull(command.notes()));
-        return loanRepository.save(loan);
+        KurLoan saved = loanRepository.save(loan);
+        audit(AuditEventType.KUR_LOAN_CREATE,
+                "KUR loan created: id=" + saved.getId()
+                        + ", lender=" + saved.getLender()
+                        + ", principal=" + moneyString(saved.getPrincipalOriginal())
+                        + ", provenance=" + saved.getProvenance()
+                        + ", agreementDocumentId=" + saved.getAgreementDocumentId()
+                        + ", scheduleDocumentId=" + saved.getScheduleDocumentId());
+        return saved;
     }
 
     /**
@@ -170,6 +196,16 @@ public class KurLoanService {
      */
     @Transactional
     public KurInstallment importScheduleRow(UUID loanId, ScheduleRow row) {
+        return importScheduleRowOutcome(loanId, row).installment();
+    }
+
+    /**
+     * Same as {@link #importScheduleRow(UUID, ScheduleRow)} but reports whether a
+     * row was created, so the HTTP layer can answer 201 on the first import and
+     * 200 on an idempotent replay.
+     */
+    @Transactional
+    public ScheduleImportOutcome importScheduleRowOutcome(UUID loanId, ScheduleRow row) {
         Objects.requireNonNull(row, "row");
         KurLoan loan = requireLoan(loanId);
         requirePositiveInteger(row.installmentNumber(), "installmentNumber");
@@ -185,14 +221,21 @@ public class KurLoanService {
                 .orElse(null);
         if (sameSource != null) {
             requireSameScheduleRow(sameSource, row, sourceRef);
-            return sameSource;
+            return new ScheduleImportOutcome(sameSource, false);
         }
 
         KurInstallment sameNumber = installmentRepository
                 .findByLoanIdAndInstallmentNumber(loanId, row.installmentNumber())
                 .orElse(null);
         if (sameNumber != null) {
-            return reconcileWithLenderRow(sameNumber, row, sourceKind, sourceRef);
+            String before = scheduleRowValues(sameNumber);
+            KurInstallment rebased = reconcileWithLenderRow(sameNumber, row, sourceKind, sourceRef);
+            audit(AuditEventType.KUR_SCHEDULE_IMPORT,
+                    "KUR schedule row re-baselined: loanId=" + loanId
+                            + ", installmentId=" + rebased.getId()
+                            + ", before[" + before + "]"
+                            + ", after[" + scheduleRowValues(rebased) + "]");
+            return new ScheduleImportOutcome(rebased, false);
         }
 
         KurInstallment installment = new KurInstallment();
@@ -207,7 +250,12 @@ public class KurLoanService {
         installment.setSourceRef(sourceRef);
         installment.setPaidAmount(KurMoneyMath.ZERO);
         installment.setStatus(KurInstallmentStatus.UNPAID);
-        return installmentRepository.save(installment);
+        KurInstallment saved = installmentRepository.save(installment);
+        audit(AuditEventType.KUR_SCHEDULE_IMPORT,
+                "KUR schedule row imported: loanId=" + loanId
+                        + ", installmentId=" + saved.getId()
+                        + ", values[" + scheduleRowValues(saved) + "]");
+        return new ScheduleImportOutcome(saved, true);
     }
 
     /**
@@ -217,10 +265,15 @@ public class KurLoanService {
      */
     @Transactional
     public KurPayment recordPayment(UUID loanId, UUID installmentId, PaymentCommand command) {
+        return recordPaymentOutcome(loanId, installmentId, command).payment();
+    }
+
+    @Transactional
+    public PaymentOutcome recordPaymentOutcome(UUID loanId, UUID installmentId, PaymentCommand command) {
         Objects.requireNonNull(command, "command");
         KurLoan loan = requireLoan(loanId);
         KurInstallment installment = installmentRepository.findById(installmentId)
-                .orElseThrow(() -> new IllegalArgumentException("Unknown installment: " + installmentId));
+                .orElseThrow(() -> new KurResourceNotFoundException("Unknown installment: " + installmentId));
         if (!installment.getLoan().getId().equals(loan.getId())) {
             throw new IllegalArgumentException("Installment does not belong to loan " + loanId);
         }
@@ -233,7 +286,7 @@ public class KurLoanService {
                 .findByInstallmentIdAndSourceRef(installmentId, command.sourceRef().trim())
                 .orElse(null);
         if (existing != null) {
-            return existing;
+            return new PaymentOutcome(existing, false);
         }
 
         KurPayment payment = new KurPayment();
@@ -247,27 +300,64 @@ public class KurLoanService {
         installment.recalculateFromPayments();
         KurPayment saved = paymentRepository.save(payment);
         installmentRepository.save(installment);
-        return saved;
+        audit(AuditEventType.KUR_PAYMENT_RECORD,
+                "KUR payment recorded: loanId=" + loanId
+                        + ", installmentId=" + installmentId
+                        + ", paymentId=" + saved.getId()
+                        + ", amount=" + moneyString(saved.getAmount())
+                        + ", paymentDate=" + saved.getPaymentDate()
+                        + ", sourceRef=" + saved.getSourceRef()
+                        + ", evidenceRef=" + saved.getEvidenceRef()
+                        + ", installmentStatus=" + installment.getStatus()
+                        + ", installmentPaidAmount=" + moneyString(installment.getPaidAmount()));
+        return new PaymentOutcome(saved, true);
     }
 
     /**
      * Reverses a payment instead of deleting it. The installment's paid total and
      * status are recomputed from the remaining active payments.
      */
+    /**
+     * Reverses a payment that must belong to the supplied loan. The membership check
+     * runs inside the transaction before any mutation, so a mismatched loan id cannot
+     * leave a half-applied correction.
+     */
+    @Transactional
+    public KurPayment reversePayment(UUID loanId, UUID paymentId, String reason) {
+        KurPayment payment = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new KurResourceNotFoundException("Unknown payment: " + paymentId));
+        if (!payment.getInstallment().getLoan().getId().equals(loanId)) {
+            throw new IllegalArgumentException("Payment does not belong to loan " + loanId);
+        }
+        return reversePayment(paymentId, reason);
+    }
+
     @Transactional
     public KurPayment reversePayment(UUID paymentId, String reason) {
         requireText(reason, "reason");
         KurPayment payment = paymentRepository.findById(paymentId)
-                .orElseThrow(() -> new IllegalArgumentException("Unknown payment: " + paymentId));
+                .orElseThrow(() -> new KurResourceNotFoundException("Unknown payment: " + paymentId));
         if (payment.isReversed()) {
             return payment;
         }
+        KurInstallment installment = payment.getInstallment();
+        String statusBefore = installment.getStatus().name();
+        String paidBefore = moneyString(installment.getPaidAmount());
         payment.setReversedAt(java.time.LocalDateTime.now());
         payment.setReversalReason(reason.trim());
-        KurInstallment installment = payment.getInstallment();
         installment.recalculateFromPayments();
         installmentRepository.save(installment);
-        return paymentRepository.save(payment);
+        KurPayment saved = paymentRepository.save(payment);
+        audit(AuditEventType.KUR_PAYMENT_REVERSE,
+                "KUR payment reversed: loanId=" + installment.getLoan().getId()
+                        + ", installmentId=" + installment.getId()
+                        + ", paymentId=" + saved.getId()
+                        + ", amount=" + moneyString(saved.getAmount())
+                        + ", sourceRef=" + saved.getSourceRef()
+                        + ", reason=" + saved.getReversalReason()
+                        + ", installmentStatus=" + statusBefore + "->" + installment.getStatus()
+                        + ", installmentPaidAmount=" + paidBefore + "->" + moneyString(installment.getPaidAmount()));
+        return saved;
     }
 
     /**
@@ -276,6 +366,11 @@ public class KurLoanService {
      */
     @Transactional
     public KurReserveEntry recordReserve(UUID loanId, ReserveCommand command) {
+        return recordReserveOutcome(loanId, command).entry();
+    }
+
+    @Transactional
+    public ReserveOutcome recordReserveOutcome(UUID loanId, ReserveCommand command) {
         Objects.requireNonNull(command, "command");
         KurLoan loan = requireLoan(loanId);
         Objects.requireNonNull(command.entryDate(), "entryDate");
@@ -287,7 +382,7 @@ public class KurLoanService {
                 .findByLoanIdAndSourceRef(loanId, command.sourceRef().trim())
                 .orElse(null);
         if (existing != null) {
-            return existing;
+            return new ReserveOutcome(existing, false);
         }
 
         if (command.kind().isRelease()) {
@@ -308,7 +403,47 @@ public class KurLoanService {
         entry.setAmount(KurMoneyMath.money(command.amount()));
         entry.setDescription(trimToNull(command.description()));
         entry.setSourceRef(command.sourceRef().trim());
-        return reserveEntryRepository.save(entry);
+        KurReserveEntry saved = reserveEntryRepository.save(entry);
+        audit(AuditEventType.KUR_RESERVE_RECORD,
+                "KUR reserve movement recorded: loanId=" + loanId
+                        + ", reserveEntryId=" + saved.getId()
+                        + ", kind=" + saved.getKind()
+                        + ", amount=" + moneyString(saved.getAmount())
+                        + ", entryDate=" + saved.getEntryDate()
+                        + ", sourceRef=" + saved.getSourceRef());
+        return new ReserveOutcome(saved, true);
+    }
+
+    /**
+     * Marks a loan VERIFIED. Only a Finance Controller holding {@code KUR_VERIFY}
+     * reaches this method through the HTTP layer, and both documents must be on the
+     * loan (or supplied here). A founder estimate is never upgraded automatically.
+     */
+    @Transactional
+    public KurLoan verifyLoan(UUID loanId, UUID agreementDocumentId, UUID scheduleDocumentId, String reason) {
+        requireText(reason, "reason");
+        KurLoan loan = requireLoan(loanId);
+        UUID agreement = agreementDocumentId != null ? agreementDocumentId : loan.getAgreementDocumentId();
+        UUID schedule = scheduleDocumentId != null ? scheduleDocumentId : loan.getScheduleDocumentId();
+        if (agreement == null || schedule == null) {
+            throw new IllegalArgumentException(
+                    "A verified loan requires both the signed agreement and the lender schedule to be attached");
+        }
+        requireDocumentIfPresent(agreement, "agreementDocumentId");
+        requireDocumentIfPresent(schedule, "scheduleDocumentId");
+
+        KurLoanProvenance before = loan.getProvenance();
+        loan.setAgreementDocumentId(agreement);
+        loan.setScheduleDocumentId(schedule);
+        loan.setProvenance(KurLoanProvenance.VERIFIED);
+        KurLoan saved = loanRepository.save(loan);
+        audit(AuditEventType.KUR_LOAN_VERIFY,
+                "KUR loan verified: loanId=" + loanId
+                        + ", provenance=" + before + "->" + saved.getProvenance()
+                        + ", agreementDocumentId=" + agreement
+                        + ", scheduleDocumentId=" + schedule
+                        + ", reason=" + reason.trim());
+        return saved;
     }
 
     /**
@@ -522,7 +657,28 @@ public class KurLoanService {
 
     private KurLoan requireLoan(UUID loanId) {
         return loanRepository.findById(loanId)
-                .orElseThrow(() -> new IllegalArgumentException("Unknown KUR loan: " + loanId));
+                .orElseThrow(() -> new KurResourceNotFoundException("Unknown KUR loan: " + loanId));
+    }
+
+    private void requireDocumentIfPresent(UUID documentId, String field) {
+        if (documentId != null && !documentRepository.existsById(documentId)) {
+            throw new IllegalArgumentException("Unknown document for " + field + ": " + documentId);
+        }
+    }
+
+    private static String scheduleRowValues(KurInstallment installment) {
+        return "number=" + installment.getInstallmentNumber()
+                + ", dueDate=" + installment.getDueDate()
+                + ", amount=" + moneyString(installment.getAmount())
+                + ", principal=" + moneyString(installment.getPrincipal())
+                + ", interest=" + moneyString(installment.getInterest())
+                + ", fee=" + moneyString(installment.getFee())
+                + ", sourceKind=" + installment.getSourceKind()
+                + ", sourceRef=" + installment.getSourceRef();
+    }
+
+    private void audit(AuditEventType eventType, String details) {
+        securityAuditService.log(eventType, details);
     }
 
     private BigDecimal bucket(List<KurReserveEntry> entries, boolean earmarked) {
