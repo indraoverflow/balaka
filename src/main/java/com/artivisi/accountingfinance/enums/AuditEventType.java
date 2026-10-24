@@ -49,5 +49,7 @@ public enum AuditEventType {
     KUR_PAYMENT_RECORD,
     KUR_PAYMENT_REVERSE,
     KUR_RESERVE_RECORD,
-    KUR_LOAN_VERIFY
+    KUR_LOAN_VERIFY,
+    // Supporting-document attachment (FAS-105)
+    KUR_DOCUMENT_UPLOAD
 }

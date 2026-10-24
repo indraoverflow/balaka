@@ -2,6 +2,7 @@ package com.artivisi.accountingfinance.service.fasternet;
 
 import com.artivisi.accountingfinance.dto.fasternet.KurReserveResponse;
 import com.artivisi.accountingfinance.dto.fasternet.KurScheduleResponse;
+import com.artivisi.accountingfinance.entity.Document;
 import com.artivisi.accountingfinance.entity.KurInstallment;
 import com.artivisi.accountingfinance.entity.KurLoan;
 import com.artivisi.accountingfinance.entity.KurPayment;
@@ -31,8 +32,10 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -57,6 +60,16 @@ public class KurLoanService {
     public static final String CONTRACT_VERSION = "fasternet.dashboard/v1";
     public static final String CURRENCY = "IDR";
     public static final String INVARIANT = "reserving funds never marks an installment paid";
+
+    /**
+     * Expected document kinds recorded in the verification audit. {@code Document}
+     * has no type/kind column, so the expected kind is audited alongside the id to
+     * make it reviewable which document was meant to be the agreement and which the
+     * lender schedule.
+     */
+    public static final String DOCUMENT_KIND_SIGNED_AGREEMENT = "signed-agreement";
+    public static final String DOCUMENT_KIND_LENDER_SCHEDULE = "lender-schedule";
+    public static final String DOCUMENT_PURPOSE_UNSPECIFIED = "UNSPECIFIED";
 
     private final KurLoanRepository loanRepository;
     private final KurInstallmentRepository installmentRepository;
@@ -147,14 +160,17 @@ public class KurLoanService {
         requirePositiveInteger(command.termMonths(), "termMonths");
         requirePositiveInteger(command.installmentCount(), "installmentCount");
 
-        KurLoanProvenance provenance = command.provenance() == null
-                ? KurLoanProvenance.FOUNDER_ESTIMATE
-                : command.provenance();
-        if (provenance == KurLoanProvenance.VERIFIED
-                && (command.agreementDocumentId() == null || command.scheduleDocumentId() == null)) {
+        // Provenance is not a caller decision. A loan always starts as a founder
+        // estimate; only verifyLoan() may upgrade it after both source documents
+        // are attached and reviewed. This keeps a future caller from bypassing the
+        // verification action by passing VERIFIED/BANK_CONFIRMED here.
+        if (command.provenance() != null
+                && command.provenance() != KurLoanProvenance.FOUNDER_ESTIMATE) {
             throw new IllegalArgumentException(
-                    "A verified loan requires both the signed agreement and the lender schedule to be attached");
+                    "createLoan only records FOUNDER_ESTIMATE; use verifyLoan() with the signed agreement"
+                            + " and lender schedule to verify the loan");
         }
+        KurLoanProvenance provenance = KurLoanProvenance.FOUNDER_ESTIMATE;
         requireDocumentIfPresent(command.agreementDocumentId(), "agreementDocumentId");
         requireDocumentIfPresent(command.scheduleDocumentId(), "scheduleDocumentId");
 
@@ -259,6 +275,26 @@ public class KurLoanService {
     }
 
     /**
+     * Resolves the row a concurrent schedule import already stored under the same
+     * source reference, so the losing request can replay it with 200. A changed
+     * payload under the same reference is still a conflict.
+     */
+    @Transactional(readOnly = true)
+    public Optional<ScheduleImportOutcome> replayScheduleRow(UUID loanId, ScheduleRow row) {
+        Objects.requireNonNull(row, "row");
+        KurScheduleSourceKind sourceKind = row.sourceKind() == null
+                ? KurScheduleSourceKind.ESTIMATE : row.sourceKind();
+        requireText(row.sourceRef(), "sourceRef");
+        String sourceRef = row.sourceRef().trim();
+        return installmentRepository
+                .findByLoanIdAndSourceKindAndSourceRef(loanId, sourceKind, sourceRef)
+                .map(existing -> {
+                    requireSameScheduleRow(existing, row, sourceRef);
+                    return new ScheduleImportOutcome(existing, false);
+                });
+    }
+
+    /**
      * Records a payment against an installment. Evidence is mandatory: missing
      * evidence means the installment is not paid. The same source reference is
      * applied once.
@@ -286,6 +322,7 @@ public class KurLoanService {
                 .findByInstallmentIdAndSourceRef(installmentId, command.sourceRef().trim())
                 .orElse(null);
         if (existing != null) {
+            requireSamePayment(existing, command);
             return new PaymentOutcome(existing, false);
         }
 
@@ -311,6 +348,24 @@ public class KurLoanService {
                         + ", installmentStatus=" + installment.getStatus()
                         + ", installmentPaidAmount=" + moneyString(installment.getPaidAmount()));
         return new PaymentOutcome(saved, true);
+    }
+
+    /**
+     * Resolves a payment that a concurrent request already recorded under the same
+     * source reference. Used by the write API after a unique-index race so the
+     * losing request replays the stored row with 200 instead of surfacing a
+     * database error. A changed payload under the same reference is a conflict.
+     */
+    @Transactional(readOnly = true)
+    public Optional<PaymentOutcome> replayPayment(UUID installmentId, PaymentCommand command) {
+        Objects.requireNonNull(command, "command");
+        requireText(command.sourceRef(), "sourceRef");
+        return paymentRepository
+                .findByInstallmentIdAndSourceRef(installmentId, command.sourceRef().trim())
+                .map(existing -> {
+                    requireSamePayment(existing, command);
+                    return new PaymentOutcome(existing, false);
+                });
     }
 
     /**
@@ -382,6 +437,7 @@ public class KurLoanService {
                 .findByLoanIdAndSourceRef(loanId, command.sourceRef().trim())
                 .orElse(null);
         if (existing != null) {
+            requireSameReserve(existing, command);
             return new ReserveOutcome(existing, false);
         }
 
@@ -415,6 +471,23 @@ public class KurLoanService {
     }
 
     /**
+     * Resolves a reserve movement a concurrent request already stored under the same
+     * source reference, so the losing request can replay it with 200. A changed
+     * kind/amount under the same reference is a conflict.
+     */
+    @Transactional(readOnly = true)
+    public Optional<ReserveOutcome> replayReserve(UUID loanId, ReserveCommand command) {
+        Objects.requireNonNull(command, "command");
+        requireText(command.sourceRef(), "sourceRef");
+        return reserveEntryRepository
+                .findByLoanIdAndSourceRef(loanId, command.sourceRef().trim())
+                .map(existing -> {
+                    requireSameReserve(existing, command);
+                    return new ReserveOutcome(existing, false);
+                });
+    }
+
+    /**
      * Marks a loan VERIFIED. Only a Finance Controller holding {@code KUR_VERIFY}
      * reaches this method through the HTTP layer, and both documents must be on the
      * loan (or supplied here). A founder estimate is never upgraded automatically.
@@ -429,6 +502,11 @@ public class KurLoanService {
             throw new IllegalArgumentException(
                     "A verified loan requires both the signed agreement and the lender schedule to be attached");
         }
+        if (agreement.equals(schedule)) {
+            throw new IllegalArgumentException(
+                    "agreementDocumentId and scheduleDocumentId must be different documents:"
+                            + " the signed agreement and the lender repayment schedule");
+        }
         requireDocumentIfPresent(agreement, "agreementDocumentId");
         requireDocumentIfPresent(schedule, "scheduleDocumentId");
 
@@ -441,9 +519,63 @@ public class KurLoanService {
                 "KUR loan verified: loanId=" + loanId
                         + ", provenance=" + before + "->" + saved.getProvenance()
                         + ", agreementDocumentId=" + agreement
+                        + ", agreementDocumentKind=" + DOCUMENT_KIND_SIGNED_AGREEMENT
                         + ", scheduleDocumentId=" + schedule
+                        + ", scheduleDocumentKind=" + DOCUMENT_KIND_LENDER_SCHEDULE
                         + ", reason=" + reason.trim());
         return saved;
+    }
+
+    /**
+     * Records the attachment of a KUR supporting document as a security audit event.
+     * {@code Document.uploadedBy/uploadedAt} already record the file, but evidence
+     * attachment must be traceable as an explicit event with its expected purpose.
+     */
+    @Transactional
+    public void auditDocumentUpload(Document document, String purpose) {
+        Objects.requireNonNull(document, "document");
+        String normalizedPurpose = hasText(purpose)
+                ? purpose.trim().toUpperCase(Locale.ROOT) : DOCUMENT_PURPOSE_UNSPECIFIED;
+        audit(AuditEventType.KUR_DOCUMENT_UPLOAD,
+                "KUR supporting document uploaded: documentId=" + document.getId()
+                        + ", purpose=" + normalizedPurpose
+                        + ", actor=" + document.getUploadedBy()
+                        + ", contentType=" + document.getContentType()
+                        + ", fileSize=" + document.getFileSize());
+    }
+
+    /**
+     * A replayed payment source reference must describe the same payment. Silently
+     * accepting a changed amount or evidence would hide a data-entry error.
+     */
+    private void requireSamePayment(KurPayment existing, PaymentCommand command) {
+        boolean same = sameMoney(existing.getAmount(), command.amount())
+                && Objects.equals(existing.getPaymentDate(), command.paymentDate())
+                && Objects.equals(trimToNull(existing.getBankRef()), trimToNull(command.bankRef()))
+                && Objects.equals(existing.getEvidenceRef(), command.evidenceRef().trim());
+        if (!same) {
+            throw new IllegalStateException(
+                    "Payment source " + command.sourceRef().trim()
+                            + " was already recorded with different values; use a new source reference"
+                            + " and reverse the original payment instead");
+        }
+    }
+
+    /**
+     * A replayed reserve source reference must describe the same movement. A changed
+     * kind or amount would otherwise be silently ignored.
+     */
+    private void requireSameReserve(KurReserveEntry existing, ReserveCommand command) {
+        boolean same = existing.getKind() == command.kind()
+                && sameMoney(existing.getAmount(), command.amount())
+                && Objects.equals(existing.getEntryDate(), command.entryDate())
+                && Objects.equals(trimToNull(existing.getDescription()), trimToNull(command.description()));
+        if (!same) {
+            throw new IllegalStateException(
+                    "Reserve source " + command.sourceRef().trim()
+                            + " was already recorded with different values; use a new source reference"
+                            + " and a correction entry instead");
+        }
     }
 
     /**

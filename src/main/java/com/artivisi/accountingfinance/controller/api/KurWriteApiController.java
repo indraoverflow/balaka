@@ -27,6 +27,7 @@ import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -44,6 +45,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -79,13 +81,19 @@ public class KurWriteApiController {
     @PreAuthorize("hasAuthority('SCOPE_kur:write') and hasAuthority('" + Permission.KUR_WRITE + "')")
     @Operation(summary = "Upload a KUR supporting document",
             description = "Stores the signed agreement, lender repayment schedule or transfer proof. "
-                    + "Returns the document id to attach to the loan or payment.")
-    @ApiResponse(responseCode = "201", description = "Document stored")
-    @ApiResponse(responseCode = "400", description = "Invalid or rejected file")
+                    + "Returns the document id to attach to the loan or payment. The optional purpose "
+                    + "(for example SIGNED_AGREEMENT, LENDER_SCHEDULE, PAYMENT_EVIDENCE) is recorded "
+                    + "with the document id and actor in the KUR_DOCUMENT_UPLOAD audit event.")
+    @ApiResponse(responseCode = "201", description = "Document stored and audited")
+    @ApiResponse(responseCode = "400", description = "Invalid or rejected file, or invalid purpose")
     @ApiResponse(responseCode = "401", description = "Missing or invalid credentials")
     @ApiResponse(responseCode = "403", description = "Token lacks KUR_WRITE")
-    public ResponseEntity<DocumentResponse> uploadDocument(@RequestParam("file") MultipartFile file) throws IOException {
+    public ResponseEntity<DocumentResponse> uploadDocument(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "purpose", required = false) String purpose) throws IOException {
+        String normalizedPurpose = normalizePurpose(purpose);
         Document saved = documentService.upload(file, CurrentUser.name());
+        kurLoanService.auditDocumentUpload(saved, normalizedPurpose);
         log.info("FASTERNET KUR: supporting document stored id={}", saved.getId());
         return ResponseEntity.status(HttpStatus.CREATED).body(DocumentResponse.from(saved));
     }
@@ -166,16 +174,23 @@ public class KurWriteApiController {
     public ResponseEntity<InstallmentResponse> importScheduleRow(
             @PathVariable UUID loanId,
             @Valid @RequestBody ScheduleRowRequest request) {
-        KurLoanService.ScheduleImportOutcome outcome = kurLoanService.importScheduleRowOutcome(
-                loanId, new KurLoanService.ScheduleRow(
-                        request.installmentNumber(),
-                        request.dueDate(),
-                        request.amount(),
-                        request.principal(),
-                        request.interest(),
-                        request.fee(),
-                        request.sourceKind() == null ? KurScheduleSourceKind.LENDER_SCHEDULE : request.sourceKind(),
-                        request.sourceRef()));
+        KurLoanService.ScheduleRow row = new KurLoanService.ScheduleRow(
+                request.installmentNumber(),
+                request.dueDate(),
+                request.amount(),
+                request.principal(),
+                request.interest(),
+                request.fee(),
+                request.sourceKind() == null ? KurScheduleSourceKind.LENDER_SCHEDULE : request.sourceKind(),
+                request.sourceRef());
+        KurLoanService.ScheduleImportOutcome outcome;
+        try {
+            outcome = kurLoanService.importScheduleRowOutcome(loanId, row);
+        } catch (DataIntegrityViolationException ex) {
+            // A concurrent import won the unique-index race. Replay the stored row
+            // instead of reporting the ledger as unavailable.
+            outcome = kurLoanService.replayScheduleRow(loanId, row).orElseThrow(() -> ex);
+        }
         log.info("FASTERNET KUR: schedule row {} loan={} installment={}",
                 outcome.created() ? "created" : "replayed", loanId, outcome.installment().getId());
         return ResponseEntity.status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK)
@@ -197,17 +212,25 @@ public class KurWriteApiController {
     @ApiResponse(responseCode = "401", description = "Missing or invalid credentials")
     @ApiResponse(responseCode = "403", description = "Token lacks KUR_WRITE")
     @ApiResponse(responseCode = "404", description = "Loan or installment not found")
+    @ApiResponse(responseCode = "409", description = "Source reference already used with different payment values")
     public ResponseEntity<PaymentResponse> recordPayment(
             @PathVariable UUID loanId,
             @PathVariable UUID installmentId,
             @Valid @RequestBody PaymentRequest request) {
-        KurLoanService.PaymentOutcome outcome = kurLoanService.recordPaymentOutcome(
-                loanId, installmentId, new KurLoanService.PaymentCommand(
-                        request.paymentDate(),
-                        request.amount(),
-                        request.bankRef(),
-                        request.evidenceRef(),
-                        request.sourceRef()));
+        KurLoanService.PaymentCommand command = new KurLoanService.PaymentCommand(
+                request.paymentDate(),
+                request.amount(),
+                request.bankRef(),
+                request.evidenceRef(),
+                request.sourceRef());
+        KurLoanService.PaymentOutcome outcome;
+        try {
+            outcome = kurLoanService.recordPaymentOutcome(loanId, installmentId, command);
+        } catch (DataIntegrityViolationException ex) {
+            // A concurrent request won the unique-index race. Replay its row with 200;
+            // a changed payload under the same source ref still surfaces as 409.
+            outcome = kurLoanService.replayPayment(installmentId, command).orElseThrow(() -> ex);
+        }
         KurInstallment installment = outcome.payment().getInstallment();
         log.info("FASTERNET KUR: payment {} payment={} installment={} status={}",
                 outcome.created() ? "recorded" : "replayed",
@@ -250,16 +273,24 @@ public class KurWriteApiController {
     @ApiResponse(responseCode = "401", description = "Missing or invalid credentials")
     @ApiResponse(responseCode = "403", description = "Token lacks KUR_WRITE")
     @ApiResponse(responseCode = "404", description = "Loan not found")
+    @ApiResponse(responseCode = "409", description = "Source reference already used with different reserve values")
     public ResponseEntity<ReserveEntryResponse> recordReserve(
             @PathVariable UUID loanId,
             @Valid @RequestBody ReserveRequest request) {
-        KurLoanService.ReserveOutcome outcome = kurLoanService.recordReserveOutcome(
-                loanId, new KurLoanService.ReserveCommand(
-                        request.entryDate(),
-                        request.kind(),
-                        request.amount(),
-                        request.description(),
-                        request.sourceRef()));
+        KurLoanService.ReserveCommand command = new KurLoanService.ReserveCommand(
+                request.entryDate(),
+                request.kind(),
+                request.amount(),
+                request.description(),
+                request.sourceRef());
+        KurLoanService.ReserveOutcome outcome;
+        try {
+            outcome = kurLoanService.recordReserveOutcome(loanId, command);
+        } catch (DataIntegrityViolationException ex) {
+            // A concurrent request won the unique-index race. Replay its row with 200;
+            // a changed kind/amount under the same source ref still surfaces as 409.
+            outcome = kurLoanService.replayReserve(loanId, command).orElseThrow(() -> ex);
+        }
         log.info("FASTERNET KUR: reserve {} entry={} loan={} kind={}",
                 outcome.created() ? "recorded" : "replayed",
                 outcome.entry().getId(), loanId, outcome.entry().getKind());
@@ -278,12 +309,34 @@ public class KurWriteApiController {
                 "message", ex.getMessage()));
     }
 
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> handleDataIntegrityConflict(DataIntegrityViolationException ex) {
+        // More specific than DataAccessException so a duplicate-key or constraint
+        // conflict is deterministic (409) instead of being reported as a 503 outage.
+        log.warn("FASTERNET KUR write: data integrity conflict: {}",
+                ex.getMostSpecificCause().getClass().getSimpleName());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "error", "conflict",
+                "message", "The write conflicts with an existing record; retry to replay the stored row"));
+    }
+
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<Map<String, String>> handleLedgerUnavailable(DataAccessException ex) {
         log.error("FASTERNET KUR write: ledger is unavailable: {}", ex.getClass().getSimpleName());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
                 "error", "ledger_unavailable",
                 "message", "The accounting ledger is currently unavailable"));
+    }
+
+    private static String normalizePurpose(String purpose) {
+        if (purpose == null || purpose.isBlank()) {
+            return KurLoanService.DOCUMENT_PURPOSE_UNSPECIFIED;
+        }
+        String normalized = purpose.trim().toUpperCase(Locale.ROOT);
+        if (normalized.length() > 60) {
+            throw new IllegalArgumentException("purpose must not exceed 60 characters");
+        }
+        return normalized;
     }
 
     // ------------------------------------------------------------------
