@@ -275,6 +275,11 @@ never a scalar figure:
 | `balance` | decimal string | debit-normal balance as of `asOf` |
 | `status` | enum | `posted` in v1 |
 
+Membership is explicit: only accounts with `chart_of_accounts.is_cash_bank = true` are
+included. There is no account-code prefix rule, so receivables (`1.1.04`, `1.1.08`),
+prepaid expenses (`1.1.05`–`1.1.07`) and input VAT (`1.1.09`) are never cash, even when
+they carry a balance.
+
 The sum of `cash.accounts[].balance` equals `figures["cash.total"].value`. When no cash/bank
 account is configured the array is empty and both `cash.total` and `missing["cash.accounts"]`
 carry the reason.

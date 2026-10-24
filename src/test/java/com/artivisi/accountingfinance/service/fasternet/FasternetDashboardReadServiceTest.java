@@ -5,9 +5,17 @@ import com.artivisi.accountingfinance.dto.fasternet.FasternetOverviewResponse;
 import com.artivisi.accountingfinance.entity.ChartOfAccount;
 import com.artivisi.accountingfinance.entity.CompanyConfig;
 import com.artivisi.accountingfinance.entity.FiscalPeriod;
+import com.artivisi.accountingfinance.entity.JournalEntry;
+import com.artivisi.accountingfinance.entity.JournalTemplate;
+import com.artivisi.accountingfinance.entity.Transaction;
 import com.artivisi.accountingfinance.enums.FiscalPeriodStatus;
+import com.artivisi.accountingfinance.enums.TransactionStatus;
+import com.artivisi.accountingfinance.repository.ChartOfAccountRepository;
 import com.artivisi.accountingfinance.repository.CompanyConfigRepository;
 import com.artivisi.accountingfinance.repository.FiscalPeriodRepository;
+import com.artivisi.accountingfinance.repository.JournalEntryRepository;
+import com.artivisi.accountingfinance.repository.JournalTemplateRepository;
+import com.artivisi.accountingfinance.repository.TransactionRepository;
 import com.artivisi.accountingfinance.service.DashboardService;
 import com.artivisi.accountingfinance.service.ReportService;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +33,7 @@ import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -66,7 +75,16 @@ class FasternetDashboardReadServiceTest {
     private FiscalPeriodRepository fiscalPeriodRepository;
 
     @Autowired
-    private com.artivisi.accountingfinance.repository.JournalEntryRepository journalEntryRepository;
+    private JournalEntryRepository journalEntryRepository;
+
+    @Autowired
+    private JournalTemplateRepository journalTemplateRepository;
+
+    @Autowired
+    private TransactionRepository transactionRepository;
+
+    @Autowired
+    private ChartOfAccountRepository chartOfAccountRepository;
 
     @Test
     @DisplayName("emits the full envelope and every contract figure key")
@@ -207,6 +225,79 @@ class FasternetDashboardReadServiceTest {
             assertThat(account.status()).isEqualTo("posted");
             assertDecimalString(account.balance());
         });
+    }
+
+    @Test
+    @DisplayName("cash universe is explicit: only Kas/Bank, never AR, prepaid or input VAT")
+    void cashUniverseExcludesNonCashCurrentAssets() {
+        List<String> cashCodes = chartOfAccountRepository.findCashBankAccounts().stream()
+                .map(ChartOfAccount::getAccountCode)
+                .toList();
+        assertThat(cashCodes).containsExactly("1.1.01", "1.1.02", "1.1.03");
+
+        for (String nonCashCode : List.of("1.1.04", "1.1.05", "1.1.06", "1.1.07", "1.1.08", "1.1.09")) {
+            ChartOfAccount account = chartOfAccountRepository.findByAccountCode(nonCashCode).orElseThrow();
+            assertThat(account.getIsCashBank()).as(nonCashCode).isFalse();
+        }
+
+        FasternetOverviewResponse overview = readService.buildOverview(AS_OF);
+        assertThat(overview.series().cashAccounts())
+                .extracting(FasternetOverviewResponse.CashAccount::accountCode)
+                .doesNotContain("1.1.04", "1.1.05", "1.1.06", "1.1.07", "1.1.08", "1.1.09");
+    }
+
+    @Test
+    @DisplayName("a nonzero receivable changes receivables, not cash.total or cash.accounts")
+    void nonzeroReceivableDoesNotMoveCashTotal() {
+        FasternetOverviewResponse before = readService.buildOverview(AS_OF);
+
+        ChartOfAccount receivable = chartOfAccountRepository.findByAccountCode("1.1.04").orElseThrow();
+        ChartOfAccount revenue = chartOfAccountRepository.findByAccountCode("4.1.01").orElseThrow();
+        JournalTemplate template = journalTemplateRepository
+                .findById(UUID.fromString("e0000000-0000-0000-0000-000000000099")).orElseThrow();
+
+        BigDecimal unpaidInvoice = new BigDecimal("7500000.00");
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+
+        Transaction transaction = new Transaction();
+        transaction.setTransactionNumber("TRX-FAS77-AR-" + suffix);
+        transaction.setTransactionDate(LocalDate.of(2024, 6, 15));
+        transaction.setJournalTemplate(template);
+        transaction.setAmount(unpaidInvoice);
+        transaction.setDescription("FAS-77 unpaid customer invoice");
+        transaction.setStatus(TransactionStatus.POSTED);
+        transaction = transactionRepository.save(transaction);
+
+        JournalEntry debit = new JournalEntry();
+        debit.setJournalNumber("JRN-FAS77-AR-D-" + suffix);
+        debit.setTransaction(transaction);
+        debit.setAccount(receivable);
+        debit.setDebitAmount(unpaidInvoice);
+        debit.setCreditAmount(BigDecimal.ZERO);
+
+        JournalEntry credit = new JournalEntry();
+        credit.setJournalNumber("JRN-FAS77-AR-C-" + suffix);
+        credit.setTransaction(transaction);
+        credit.setAccount(revenue);
+        credit.setDebitAmount(BigDecimal.ZERO);
+        credit.setCreditAmount(unpaidInvoice);
+
+        journalEntryRepository.saveAll(List.of(debit, credit));
+
+        FasternetOverviewResponse after = readService.buildOverview(AS_OF);
+
+        assertThat(after.figures().get("receivables.total").value()).isEqualTo(money(unpaidInvoice));
+        assertThat(after.figures().get("cash.total").value())
+                .isEqualTo(before.figures().get("cash.total").value());
+        assertThat(after.series().cash().get(3)).isEqualTo(before.series().cash().get(3));
+        assertThat(after.series().cashAccounts())
+                .extracting(FasternetOverviewResponse.CashAccount::accountCode)
+                .doesNotContain("1.1.04");
+
+        BigDecimal cashAccountSum = after.series().cashAccounts().stream()
+                .map(account -> new BigDecimal(account.balance()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(money(cashAccountSum)).isEqualTo(after.figures().get("cash.total").value());
     }
 
     @Test
