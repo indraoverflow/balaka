@@ -2,6 +2,7 @@ package com.artivisi.accountingfinance.service.fasternet;
 
 import com.artivisi.accountingfinance.dto.fasternet.KurReserveResponse;
 import com.artivisi.accountingfinance.dto.fasternet.KurScheduleResponse;
+import com.artivisi.accountingfinance.entity.ChartOfAccount;
 import com.artivisi.accountingfinance.entity.Document;
 import com.artivisi.accountingfinance.entity.KurInstallment;
 import com.artivisi.accountingfinance.entity.KurLoan;
@@ -145,6 +146,30 @@ public class KurLoanService {
     }
 
     public record ReserveOutcome(KurReserveEntry entry, boolean created) {
+    }
+
+    /**
+     * The next installment with an unpaid balance as of a date. Payment totals are
+     * computed as of that date, so a payment recorded later cannot retroactively
+     * make an earlier overdue installment look settled.
+     */
+    public record ObligationSnapshot(
+            UUID installmentId,
+            Integer installmentNumber,
+            LocalDate dueDate,
+            BigDecimal amount,
+            BigDecimal paidAmount,
+            BigDecimal outstanding,
+            KurInstallmentStatus status,
+            long daysRemaining,
+            boolean overdue,
+            KurScheduleSourceKind sourceKind,
+            String sourceRef,
+            KurLoanProvenance provenance
+    ) {
+        public boolean scheduleVerified() {
+            return provenance.isConfirmed() && sourceKind == KurScheduleSourceKind.LENDER_SCHEDULE;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -733,7 +758,8 @@ public class KurLoanService {
         }
 
         // Cash actually held in the ledger's cash/bank accounts.
-        if (chartOfAccountRepository.findCashBankAccounts().isEmpty()) {
+        List<ChartOfAccount> cashAccounts = chartOfAccountRepository.findCashBankAccounts();
+        if (cashAccounts.isEmpty()) {
             figures.put("cash.actual", new KurReserveResponse.Figure(null, "unavailable"));
             missing.add(new KurReserveResponse.Missing(
                     "cash.actual", "no cash/bank account is configured in the chart of accounts", "Finance Controller"));
@@ -743,14 +769,14 @@ public class KurLoanService {
         }
 
         // Next unpaid installment as of the effective date.
-        KurInstallment nextDue = firstUnpaidAsOf(loanId, effectiveAsOf);
+        ObligationSnapshot nextDue = nextObligation(loanId, effectiveAsOf);
         if (nextDue == null) {
             figures.put("obligation.nextDue", new KurReserveResponse.Figure(null, "unavailable"));
             missing.add(new KurReserveResponse.Missing(
                     "obligation.nextDue", "no unpaid installment is recorded for this loan", "Finance Controller"));
         } else {
             figures.put("obligation.nextDue", new KurReserveResponse.Figure(
-                    moneyString(nextDue.getAmount()),
+                    moneyString(nextDue.amount()),
                     loan.getProvenance().isConfirmed() ? "verified" : "estimate"));
         }
 
@@ -764,7 +790,7 @@ public class KurLoanService {
 
         if (nextDue != null && reserveConfigured) {
             figures.put("reserve.gap", new KurReserveResponse.Figure(
-                    moneyString(KurMoneyMath.reserveGap(nextDue.getAmount(), earmarked, separate)), "posted"));
+                    moneyString(KurMoneyMath.reserveGap(nextDue.outstanding(), earmarked, separate)), "posted"));
         } else {
             figures.put("reserve.gap", new KurReserveResponse.Figure(null, "unavailable"));
             missing.add(new KurReserveResponse.Missing(
@@ -773,12 +799,28 @@ public class KurLoanService {
                     "Finance Controller"));
         }
 
+        List<KurReserveResponse.ReserveEntry> composition = entries.stream()
+                .map(entry -> new KurReserveResponse.ReserveEntry(
+                        entry.getId().toString(),
+                        entry.getKind().isEarmarked() ? "EARMARKED" : "SEPARATE_ACCOUNT",
+                        entry.getKind().name(),
+                        moneyString(entry.getAmount()),
+                        dateString(entry.getEntryDate()),
+                        entry.getSourceRef()))
+                .toList();
+        List<KurReserveResponse.CashAccount> cashAccountDtos = cashAccounts.stream()
+                .map(account -> new KurReserveResponse.CashAccount(
+                        account.getAccountCode(), account.getAccountName()))
+                .toList();
+
         return new KurReserveResponse(
                 CONTRACT_VERSION,
                 Instant.now().toString(),
                 dateString(effectiveAsOf),
                 CURRENCY,
                 figures,
+                composition,
+                cashAccountDtos,
                 INVARIANT,
                 missing);
     }
@@ -827,24 +869,53 @@ public class KurLoanService {
                 .findByLoanIdAndEntryDateLessThanEqualOrderByEntryDateAsc(loanId, asOf), earmarked);
     }
 
-    private KurInstallment firstUnpaidAsOf(UUID loanId, LocalDate asOf) {
+    /**
+     * Returns the next installment with an unpaid balance as of {@code asOf}, or
+     * {@code null} when every recorded installment is settled by that date.
+     */
+    @Transactional(readOnly = true)
+    public ObligationSnapshot nextObligation(UUID loanId, LocalDate asOf) {
+        KurLoan loan = requireLoan(loanId);
+        LocalDate effectiveAsOf = asOf == null ? LocalDate.now() : asOf;
         List<KurInstallment> installments = installmentRepository
                 .findByLoanIdOrderByInstallmentNumberAsc(loanId);
         Map<UUID, BigDecimal> paidByInstallment = paymentRepository
                 .findByInstallmentLoanIdAndReversedAtIsNullAndPaymentDateLessThanEqualOrderByPaymentDateAsc(
-                        loanId, asOf)
+                        loanId, effectiveAsOf)
                 .stream()
                 .collect(Collectors.toMap(
                         payment -> payment.getInstallment().getId(),
                         KurPayment::getAmount,
                         BigDecimal::add));
 
-        return installments.stream()
-                .filter(installment -> paidByInstallment
-                        .getOrDefault(installment.getId(), BigDecimal.ZERO.setScale(2))
-                        .compareTo(installment.getAmount()) < 0)
-                .min(java.util.Comparator.comparing(KurInstallment::getDueDate))
+        KurInstallment installment = installments.stream()
+                .filter(candidate -> paidByInstallment
+                        .getOrDefault(candidate.getId(), BigDecimal.ZERO.setScale(2))
+                        .compareTo(candidate.getAmount()) < 0)
+                .min(java.util.Comparator
+                        .comparing(KurInstallment::getDueDate)
+                        .thenComparing(KurInstallment::getInstallmentNumber))
                 .orElse(null);
+        if (installment == null) {
+            return null;
+        }
+
+        BigDecimal paid = KurMoneyMath.money(paidByInstallment
+                .getOrDefault(installment.getId(), BigDecimal.ZERO.setScale(2)));
+        BigDecimal outstanding = KurMoneyMath.outstanding(installment.getAmount(), paid);
+        return new ObligationSnapshot(
+                installment.getId(),
+                installment.getInstallmentNumber(),
+                installment.getDueDate(),
+                KurMoneyMath.money(installment.getAmount()),
+                paid,
+                outstanding,
+                KurMoneyMath.installmentStatus(installment.getAmount(), paid),
+                java.time.temporal.ChronoUnit.DAYS.between(effectiveAsOf, installment.getDueDate()),
+                installment.getDueDate().isBefore(effectiveAsOf) && outstanding.signum() > 0,
+                installment.getSourceKind(),
+                installment.getSourceRef(),
+                loan.getProvenance());
     }
 
     private static String moneyString(BigDecimal value) {

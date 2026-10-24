@@ -1,11 +1,16 @@
 package com.artivisi.accountingfinance.controller.api;
 
+import com.artivisi.accountingfinance.dto.fasternet.KurAlertPolicyRequest;
+import com.artivisi.accountingfinance.dto.fasternet.KurAlertPolicyResponse;
+import com.artivisi.accountingfinance.dto.fasternet.KurAlertResponse;
 import com.artivisi.accountingfinance.dto.fasternet.KurReserveResponse;
 import com.artivisi.accountingfinance.dto.fasternet.KurScheduleResponse;
 import com.artivisi.accountingfinance.entity.KurLoan;
 import com.artivisi.accountingfinance.enums.KurLoanStatus;
 import com.artivisi.accountingfinance.repository.KurLoanRepository;
+import com.artivisi.accountingfinance.service.fasternet.KurAlertPolicyService;
 import com.artivisi.accountingfinance.service.fasternet.KurLoanService;
+import com.artivisi.accountingfinance.service.fasternet.KurRepaymentAlertService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,10 +22,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
@@ -42,6 +50,8 @@ import java.util.UUID;
 public class KurApiController {
 
     private final KurLoanService kurLoanService;
+    private final KurRepaymentAlertService kurRepaymentAlertService;
+    private final KurAlertPolicyService kurAlertPolicyService;
     private final KurLoanRepository kurLoanRepository;
 
     @GetMapping("/schedule")
@@ -109,6 +119,91 @@ public class KurApiController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
                     "error", "kur_loan_not_found",
+                    "message", e.getMessage()));
+        } catch (DataAccessException e) {
+            return ledgerUnavailable(e);
+        }
+    }
+
+    @GetMapping("/alert")
+    @Operation(summary = "Next-installment KUR repayment alert",
+            description = "Green/yellow/orange/red alert for the next unpaid KUR installment. "
+                    + "Returns unconfigured while the CEO + Finance Controller threshold policy is absent, "
+                    + "and unavailable when an input cannot be derived. A reserve is never a payment.")
+    @ApiResponse(responseCode = "200", description = "KUR repayment alert envelope")
+    @ApiResponse(responseCode = "400", description = "Invalid asOf or loanId")
+    @ApiResponse(responseCode = "404", description = "No KUR loan")
+    @ApiResponse(responseCode = "401", description = "Missing or invalid credentials")
+    @ApiResponse(responseCode = "403", description = "Token lacks REPORT_VIEW (analysis:read)")
+    @ApiResponse(responseCode = "503", description = "Ledger database unavailable")
+    public ResponseEntity<?> alert(
+            @RequestParam(name = "asOf", required = false) String asOf,
+            @RequestParam(name = "loanId", required = false) String loanId) {
+        LocalDate asOfDate;
+        try {
+            asOfDate = (asOf == null || asOf.isBlank()) ? LocalDate.now() : LocalDate.parse(asOf.trim());
+        } catch (DateTimeParseException e) {
+            return invalidAsOf();
+        }
+
+        try {
+            UUID resolved = resolveLoanId(loanId);
+            if (resolved == null) return loanNotFound();
+            KurAlertResponse response = kurRepaymentAlertService.evaluate(resolved, asOfDate);
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(response);
+        } catch (AmbiguousLoanException e) {
+            return invalidLoanId(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                    "error", "kur_loan_not_found",
+                    "message", e.getMessage()));
+        } catch (DataAccessException e) {
+            return ledgerUnavailable(e);
+        }
+    }
+
+    @PutMapping("/alert-policy")
+    @PreAuthorize("hasAuthority('SCOPE_kur-alert:write') and hasAuthority('ALERT_CONFIG')")
+    @Operation(summary = "Record the approved KUR repayment alert thresholds",
+            description = "Requires an approval reference and approvedBy. There are no defaults: the policy "
+                    + "is stored only when every threshold and the approval evidence are supplied together.")
+    @ApiResponse(responseCode = "200", description = "Stored alert policy")
+    @ApiResponse(responseCode = "400", description = "Incomplete or invalid policy, or invalid loanId")
+    @ApiResponse(responseCode = "404", description = "No KUR loan")
+    @ApiResponse(responseCode = "401", description = "Missing or invalid credentials")
+    @ApiResponse(responseCode = "403", description = "Token lacks kur-alert:write and ALERT_CONFIG")
+    @ApiResponse(responseCode = "503", description = "Ledger database unavailable")
+    public ResponseEntity<?> saveAlertPolicy(
+            @RequestParam(name = "loanId", required = false) String loanId,
+            @RequestBody KurAlertPolicyRequest request) {
+        try {
+            UUID resolved = resolveLoanId(loanId);
+            if (resolved == null) return loanNotFound();
+            kurAlertPolicyService.savePolicy(resolved, new KurAlertPolicyService.PolicyCommand(
+                    request.minimumCash(),
+                    request.targetReserve(),
+                    request.fundingPaceTolerancePercent(),
+                    request.orangeShortfall(),
+                    request.redShortfall(),
+                    request.approvalReference(),
+                    request.approvedBy()));
+            return ResponseEntity.ok()
+                    .cacheControl(CacheControl.noStore())
+                    .body(new KurAlertPolicyResponse(
+                            KurRepaymentAlertService.CONTRACT_VERSION,
+                            Instant.now().toString(),
+                            resolved.toString(),
+                            kurRepaymentAlertService.policyView(resolved)));
+        } catch (AmbiguousLoanException e) {
+            return invalidLoanId(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("Unknown KUR loan")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                        "error", "kur_loan_not_found",
+                        "message", e.getMessage()));
+            }
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "invalid_request",
                     "message", e.getMessage()));
         } catch (DataAccessException e) {
             return ledgerUnavailable(e);

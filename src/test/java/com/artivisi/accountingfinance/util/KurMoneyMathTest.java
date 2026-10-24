@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KurMoneyMathTest {
 
     @Test
-    @DisplayName("reserve gap is the unfunded part of the next obligation")
+    @DisplayName("reserve gap is the unfunded part of the next outstanding balance")
     void reserveGapCoveredPartially() {
         BigDecimal gap = KurMoneyMath.reserveGap(
                 new BigDecimal("2757500.00"),
@@ -23,7 +23,7 @@ class KurMoneyMathTest {
     }
 
     @Test
-    @DisplayName("a fully funded obligation has a zero gap")
+    @DisplayName("a fully funded outstanding balance has a zero gap")
     void reserveGapFullyFunded() {
         BigDecimal gap = KurMoneyMath.reserveGap(
                 new BigDecimal("2757500.00"),
@@ -31,6 +31,60 @@ class KurMoneyMathTest {
                 new BigDecimal("757500.00"));
 
         assertThat(gap).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("partial payment from operating cash nets once: outstanding 2,050,000, gap 0")
+    void reserveGapPartialPaymentFromOperatingCash() {
+        BigDecimal installment = new BigDecimal("3050000.00");
+        BigDecimal paidFromOperatingCash = new BigDecimal("1000000.00");
+        BigDecimal outstanding = KurMoneyMath.outstanding(installment, paidFromOperatingCash);
+        BigDecimal reserve = new BigDecimal("2050000.00");
+
+        assertThat(outstanding).isEqualByComparingTo("2050000.00");
+        assertThat(KurMoneyMath.reserveGap(outstanding, reserve, BigDecimal.ZERO))
+                .isEqualByComparingTo("0.00");
+        assertThat(KurMoneyMath.reserveGap(installment, reserve, BigDecimal.ZERO))
+                .as("the old contractual basis double-counts the payment")
+                .isEqualByComparingTo("1000000.00");
+    }
+
+    @Test
+    @DisplayName("partial payment from the reserve nets once: outstanding 2,050,000, gap 1,000,000")
+    void reserveGapPartialPaymentFromReserve() {
+        BigDecimal installment = new BigDecimal("3050000.00");
+        BigDecimal paidFromReserve = new BigDecimal("1000000.00");
+        BigDecimal outstanding = KurMoneyMath.outstanding(installment, paidFromReserve);
+        BigDecimal reserveAfterPayment = new BigDecimal("1050000.00");
+
+        assertThat(outstanding).isEqualByComparingTo("2050000.00");
+        assertThat(KurMoneyMath.reserveGap(outstanding, reserveAfterPayment, BigDecimal.ZERO))
+                .isEqualByComparingTo("1000000.00");
+        assertThat(KurMoneyMath.reserveGap(installment, reserveAfterPayment, BigDecimal.ZERO))
+                .as("the old contractual basis overstates the need by the amount already paid")
+                .isEqualByComparingTo("2000000.00");
+    }
+
+    @Test
+    @DisplayName("total-cash floor catches the case the old cash-beyond-minimum test misses")
+    void cashFloorBreachedAfterOutstanding() {
+        BigDecimal cash = new BigDecimal("3050000.00");
+        BigDecimal outstanding = new BigDecimal("3050000.00");
+        BigDecimal minimumCash = new BigDecimal("1000000.00");
+        BigDecimal reserve = new BigDecimal("1000000.00");
+        BigDecimal gap = KurMoneyMath.reserveGap(outstanding, reserve, BigDecimal.ZERO);
+
+        assertThat(gap).isEqualByComparingTo("2050000.00");
+        assertThat(KurMoneyMath.cashFloorBreachedAfterOutstanding(cash, outstanding, minimumCash))
+                .as("paying the outstanding leaves 0 cash, below the 1,000,000 floor")
+                .isTrue();
+        assertThat(cash.subtract(minimumCash))
+                .as("the old test compares 2,050,000 with the 2,050,000 gap and passes")
+                .isEqualByComparingTo(gap);
+        assertThat(KurMoneyMath.cashFloorBreachedAfterOutstanding(
+                new BigDecimal("5000000.00"), outstanding, minimumCash))
+                .as("cash 5,000,000 minus 3,050,000 leaves 1,950,000, above the floor")
+                .isFalse();
     }
 
     @Test
