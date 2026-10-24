@@ -233,6 +233,93 @@ endpoint is not served and the corresponding figures stay `unavailable`; see
 [`isp-billing-contract-v1.md`](./isp-billing-contract-v1.md). Never returns a fabricated
 subscriber count or billing total.
 
+### 3.5 `GET /api/fasternet/v1/kur/alert?asOf=YYYY-MM-DD` (additive, FAS-96)
+
+Additive section added by FAS-96. It does **not** change the shapes of §3.2 or §3.3.
+The dashboard/alert feed may consume it, but the state is not an accounting posting.
+
+```json
+{
+  "contractVersion": "fasternet.dashboard/v1",
+  "generatedAt": "2026-10-24T09:15:00Z",
+  "asOf": "2026-10-24",
+  "currency": "IDR",
+  "alert": {
+    "state": "unconfigured",
+    "severity": "unknown",
+    "reason": "Threshold policy is unconfigured: the CEO and Finance Controller have not approved the KUR repayment alert thresholds, so no green state is produced",
+    "shortfall": { "amount": "1757500.00", "currency": "IDR", "basis": "reserve-gap", "status": "posted" },
+    "dueDate": "2026-11-21",
+    "daysRemaining": 28,
+    "installmentNumber": 1,
+    "obligation": {
+      "amount": "2757500.00", "paidAmount": "0.00", "outstanding": "2757500.00",
+      "paymentStatus": "unpaid", "scheduleStatus": "estimate",
+      "provenance": "founder-estimate", "sourceKind": "estimate",
+      "sourceRef": "calculated-amortization"
+    },
+    "reserve": {
+      "qualifying": "1000000.00", "earmarked": "1000000.00",
+      "separateAccount": "0.00", "status": "posted"
+    },
+    "cash": {
+      "actual": "5000000.00", "minimumRequired": null,
+      "source": "Balaka POSTED cash/bank account balances",
+      "asOf": "2026-10-24", "status": "posted"
+    },
+    "payment": { "status": "unpaid", "paidAmount": "0.00", "countsAsPaid": false,
+                 "note": "a reserved amount is never a completed payment" },
+    "policy": {
+      "status": "unconfigured", "approvalReference": null, "approvedBy": null,
+      "approvedAt": null,
+      "thresholds": {
+        "minimumCash": null, "targetReserve": null,
+        "fundingPaceTolerancePercent": null,
+        "orangeShortfall": null, "redShortfall": null
+      }
+    },
+    "assumptions": [
+      "cash source: Balaka POSTED cash/bank account balances as of 2026-10-24; no forward cash-flow forecast is applied",
+      "reserve source: reserve movements recorded on or before 2026-10-24 (earmarked plus separate reserve account, no double counting)",
+      "obligation: first KUR installment with an unpaid balance as of 2026-10-24; payment totals are counted only through 2026-10-24",
+      "reserved funds are earmarked only; installment payment status is reported separately and a reserve is never a payment",
+      "threshold policy is unconfigured; no threshold value was assumed"
+    ],
+    "invariant": "a reserved amount is never a completed payment"
+  },
+  "missing": [
+    { "key": "kur.alert.policy",
+      "reason": "no CEO + Finance Controller-approved threshold policy is recorded",
+      "owner": "Finance Controller" }
+  ]
+}
+```
+
+**State rules.** `alert.state` ∈ `green`, `yellow`, `orange`, `red`, `unconfigured`,
+`unavailable`.
+
+| state | Meaning |
+|---|---|
+| `green` | Reserve funded to the approved target and actual cash covers the approved minimum, due date not passed |
+| `yellow` | Reserve accumulation is behind the approved funding plan (gap, or target-reserve deficit beyond the funding-pace tolerance) |
+| `orange` | Projected cash flow may be insufficient (minimum cash breached, cash beyond the minimum cannot cover the gap, gap reaches the orange cutoff), **or** an unverified schedule reaches the red cutoff (red is withheld) |
+| `red` | The next unpaid installment is overdue, or a **verified** lender schedule shows a gap at/above the red cutoff |
+| `unconfigured` | No CEO + Finance Controller-approved threshold policy is recorded. Never rendered as green |
+| `unavailable` | Required input (obligation, reserve movements, or cash) cannot be derived. Never treated as zero |
+
+**Threshold policy.** Values are stored by
+`PUT /api/fasternet/v1/kur/alert-policy?loanId=...` (scope `kur-alert:write` plus
+`ALERT_CONFIG`). All five thresholds and the approval evidence must be supplied
+together; there are no defaults and no partial policies. `approvalReference` records
+the CEO + Finance Controller decision. Until a complete policy exists, the read API
+returns `unconfigured`, `policy.status: "unconfigured"` and `null` thresholds.
+
+**Separation of states.** `shortfall.status` and `cash.status` use the §0.4 figure
+statuses. `obligation.scheduleStatus` is `verified` only for a `verified`/`bank-confirmed`
+loan whose next row is a lender schedule row; otherwise it is `estimate`. `payment`
+is the actual installment payment state and is never derived from the reserve.
+`alert.state` is a derived projection, not a posted journal.
+
 ## 4. Series (charts)
 
 `series` contains a block-level `status` plus named arrays with parallel `periods`:

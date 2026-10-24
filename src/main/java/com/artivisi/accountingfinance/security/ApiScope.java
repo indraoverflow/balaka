@@ -77,7 +77,10 @@ public enum ApiScope {
             Permission.KUR_WRITE),
     KUR_VERIFY("kur:verify",
             "Verify a KUR loan's provenance after the signed agreement and lender schedule are attached",
-            Permission.KUR_VERIFY);
+            Permission.KUR_VERIFY),
+    KUR_ALERT_WRITE("kur-alert:write",
+            "Record the CEO + Finance Controller-approved thresholds for the KUR repayment alert (FAS-96)",
+            Permission.ALERT_CONFIG);
 
     private static final Map<String, ApiScope> BY_NAME = Arrays.stream(values())
             .collect(Collectors.toUnmodifiableMap(ApiScope::scope, Function.identity()));
