@@ -13,6 +13,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -50,6 +51,16 @@ public class SecurityAuditService {
      */
     @Transactional
     public void log(AuditEventType eventType, String details, boolean success) {
+        logInternal(eventType, details, success);
+    }
+
+    /**
+     * Log a security event in its own transaction so a rejected operation that rolls
+     * back the caller's transaction still leaves an audit trail (for example a
+     * rejected bulk role import).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logIndependent(AuditEventType eventType, String details, boolean success) {
         logInternal(eventType, details, success);
     }
 

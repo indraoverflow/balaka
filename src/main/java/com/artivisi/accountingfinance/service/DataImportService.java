@@ -2,7 +2,9 @@ package com.artivisi.accountingfinance.service;
 
 import com.artivisi.accountingfinance.entity.*;
 import com.artivisi.accountingfinance.enums.*;
+import com.artivisi.accountingfinance.exception.FinanceRoleAssignmentException;
 import com.artivisi.accountingfinance.repository.*;
+import com.artivisi.accountingfinance.security.FinanceRolePolicy;
 import com.artivisi.accountingfinance.security.LogSanitizer;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.ToIntFunction;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -48,6 +51,7 @@ public class DataImportService {
     private final DocumentStorageService documentStorageService;
     private final ChartOfAccountService chartOfAccountService;
     private final PasswordEncoder passwordEncoder;
+    private final SecurityAuditService securityAuditService;
 
     // Core repositories
     private final ChartOfAccountRepository accountRepository;
@@ -121,6 +125,7 @@ public class DataImportService {
     private CompanyConfig importedCompanyConfig;
     private String[] pendingCompanyConfigAccountCodes;
     private boolean companyConfigSettingsOnly;
+    private boolean bootstrapFinanceRolesAllowed;
     private Map<TaxDeadlineType, TaxDeadline> taxDeadlineMap;
     private Map<String, ProjectMilestone> milestoneMap;
     private Map<String, ProductCategory> productCategoryMap;
@@ -134,6 +139,30 @@ public class DataImportService {
      */
     @Transactional
     public ImportResult importAllData(byte[] zipData) throws IOException {
+        return importAllData(zipData, false);
+    }
+
+    /**
+     * Import a seed pack bundled with the application during first-run setup.
+     *
+     * <p>This is the only import path that may assign finance roles without an
+     * authenticated finance actor, and only while the users table is still empty and
+     * the request is unauthenticated. Callers must only pass classpath seed packs;
+     * uploaded archives go through {@link #importAllData(byte[])}.
+     */
+    @Transactional
+    public ImportResult importSeedPack(byte[] zipData) throws IOException {
+        if (FinanceRolePolicy.hasAuthenticatedActor() || userRepository.count() > 0) {
+            throw new FinanceRoleAssignmentException(
+                    "Seed-pack import is only allowed before the first user exists, from the unauthenticated setup wizard.");
+        }
+        return importAllData(zipData, true);
+    }
+
+    private ImportResult importAllData(byte[] zipData, boolean seedBootstrap) throws IOException {
+        bootstrapFinanceRolesAllowed = seedBootstrap
+                && !FinanceRolePolicy.hasAuthenticatedActor()
+                && userRepository.count() == 0;
         log.info("Starting data import");
         long startTime = System.currentTimeMillis();
 
@@ -513,6 +542,9 @@ public class DataImportService {
                 log.warn("Unknown file in import: {}", LogSanitizer.filename(filename));
             }
             return 0;
+        } catch (FinanceRoleAssignmentException e) {
+            log.warn("Rejected import of {}: {}", LogSanitizer.filename(filename), e.getMessage());
+            throw e;
         } catch (Exception e) {
             log.warn("Error importing file {}: {}", LogSanitizer.filename(filename), e.getMessage(), e);
             throw new IllegalStateException("Failed to import " + filename + ": " + e.getMessage(), e);
@@ -1724,18 +1756,73 @@ public class DataImportService {
     private int importUserRoles(String content) {
         List<String[]> rows = parseCsv(content);
         // CSV columns: username,role,created_by,created_at
+        String actor = FinanceRolePolicy.actorUsername();
         for (String[] row : rows) {
             String username = getField(row, 0);
             User user = userMap.get(username);
             if (user == null) continue;
 
             Role role = Role.valueOf(getField(row, 1));
+            if (user.hasRole(role)) continue;
+
             String createdBy = getField(row, 2);
             // column 3 = created_at (ignored, auto-generated)
+            Set<Role> before = user.getRoles();
+            Set<Role> after = new TreeSet<>(before);
+            after.add(role);
+
+            // Apply the FAS-106 separation-of-duties rules at the import boundary.
+            // Fail closed: reject the whole archive rather than skipping the row.
+            if (actor != null && actor.equals(username)) {
+                throw rejectImportedRoleChange(actor, user, before, after,
+                        "You cannot change the roles of your own account; another authorized user must do it.");
+            }
+            if (FinanceRolePolicy.isFinanceRole(role)
+                    && !bootstrapFinanceRolesAllowed
+                    && !FinanceRolePolicy.actorHoldsFinanceAuthority()) {
+                throw rejectImportedRoleChange(actor, user, before, after,
+                        "Only an OWNER or FINANCE_CONTROLLER can grant finance roles (OWNER, FINANCE_CONTROLLER).");
+            }
+
             user.addRole(role, createdBy);
+            if (FinanceRolePolicy.isFinanceRole(role)) {
+                auditImportedRoleChange(actor, user, before, after, true);
+            }
         }
         userRepository.saveAll(userMap.values());
         return rows.size();
+    }
+
+    private FinanceRoleAssignmentException rejectImportedRoleChange(String actor, User user,
+                                                                    Set<Role> before, Set<Role> after,
+                                                                    String reason) {
+        String details = "Rejected role import for user: " + user.getUsername()
+                + " (id: " + user.getId() + ") by " + actorLabel(actor)
+                + ": roles " + formatRoles(before) + " -> " + formatRoles(after) + " - " + reason;
+        try {
+            securityAuditService.logIndependent(AuditEventType.USER_UPDATED, details, false);
+        } catch (RuntimeException e) {
+            log.error("Could not audit rejected role import for user {}: {}",
+                    LogSanitizer.username(user.getUsername()), e.getMessage());
+        }
+        return new FinanceRoleAssignmentException(reason);
+    }
+
+    private void auditImportedRoleChange(String actor, User user, Set<Role> before, Set<Role> after,
+                                         boolean success) {
+        securityAuditService.log(AuditEventType.USER_UPDATED,
+                "Imported role change for user: " + user.getUsername()
+                        + " (id: " + user.getId() + ") roles: " + formatRoles(before)
+                        + " -> " + formatRoles(after) + " (actor: " + actorLabel(actor) + ")",
+                success);
+    }
+
+    private static String actorLabel(String actor) {
+        return actor == null ? "anonymous" : actor;
+    }
+
+    private static String formatRoles(Collection<Role> roles) {
+        return roles.stream().map(Enum::name).sorted().collect(Collectors.joining(", ", "[", "]"));
     }
 
     private int importUserTemplatePreferences(String content) {
