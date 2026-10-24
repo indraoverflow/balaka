@@ -1,6 +1,7 @@
 package com.artivisi.accountingfinance.controller.api;
 
 import com.artivisi.accountingfinance.TestcontainersConfiguration;
+import com.artivisi.accountingfinance.security.CspNonceFilter;
 import com.artivisi.accountingfinance.service.fasternet.FasternetDashboardReadService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +21,7 @@ import java.time.LocalDate;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -41,7 +43,10 @@ class FasternetDashboardApiUnavailableTest {
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+                .addFilters(webApplicationContext.getBean(CspNonceFilter.class))
+                .apply(springSecurity())
+                .build();
     }
 
     @Test

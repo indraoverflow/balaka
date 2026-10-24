@@ -1,0 +1,582 @@
+{
+  "contractVersion" : "fasternet.dashboard/v1",
+  "generatedAt" : "2026-10-24T06:25:31.069762963Z",
+  "asOf" : "2024-06-30",
+  "period" : {
+    "from" : "2024-06-01",
+    "to" : "2024-06-30",
+    "label" : "2024-06",
+    "status" : "open"
+  },
+  "currency" : "IDR",
+  "company" : {
+    "id" : "a0000000-0000-0000-0000-000000000001",
+    "name" : "PT Artivisi Intermedia"
+  },
+  "figures" : {
+    "cash.total" : {
+      "key" : "cash.total",
+      "label" : "Kas & saldo bank",
+      "value" : "211000000.00",
+      "unit" : "IDR",
+      "status" : "posted",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "ledger",
+        "ref" : "chart_of_accounts:cash-bank",
+        "computedBy" : "DashboardService#calculateCashBalance"
+      },
+      "notes" : null
+    },
+    "revenue.period" : {
+      "key" : "revenue.period",
+      "label" : "Pendapatan periode",
+      "value" : "0.00",
+      "unit" : "IDR",
+      "status" : "posted",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "ledger",
+        "ref" : "chart_of_accounts:REVENUE",
+        "computedBy" : "ReportService#generateIncomeStatement"
+      },
+      "notes" : null
+    },
+    "expense.period" : {
+      "key" : "expense.period",
+      "label" : "Beban periode",
+      "value" : "1000000.00",
+      "unit" : "IDR",
+      "status" : "posted",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "ledger",
+        "ref" : "chart_of_accounts:EXPENSE",
+        "computedBy" : "ReportService#generateIncomeStatement"
+      },
+      "notes" : null
+    },
+    "netProfit.period" : {
+      "key" : "netProfit.period",
+      "label" : "Laba bersih (akuntansi)",
+      "value" : "-1000000.00",
+      "unit" : "IDR",
+      "status" : "posted",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "ledger",
+        "ref" : "income-statement",
+        "computedBy" : "ReportService#generateIncomeStatement"
+      },
+      "notes" : "Laba akuntansi, bukan kas tersedia"
+    },
+    "profitMargin.period" : {
+      "key" : "profitMargin.period",
+      "label" : "Margin laba",
+      "value" : null,
+      "unit" : "percent",
+      "status" : "unavailable",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "income-statement",
+        "computedBy" : "FasternetDashboardReadService#profitMargin"
+      },
+      "notes" : "revenue is zero, so the margin is undefined"
+    },
+    "receivables.total" : {
+      "key" : "receivables.total",
+      "label" : "Piutang (AR)",
+      "value" : "0.00",
+      "unit" : "IDR",
+      "status" : "posted",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "ledger",
+        "ref" : "chart_of_accounts:ASSET/receivables",
+        "computedBy" : "FasternetDashboardReadService#accountBalance"
+      },
+      "notes" : null
+    },
+    "payables.total" : {
+      "key" : "payables.total",
+      "label" : "Utang (AP)",
+      "value" : "10000000.00",
+      "unit" : "IDR",
+      "status" : "posted",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "ledger",
+        "ref" : "chart_of_accounts:LIABILITY/payables",
+        "computedBy" : "FasternetDashboardReadService#accountBalance"
+      },
+      "notes" : null
+    },
+    "equity.founderCapital" : {
+      "key" : "equity.founderCapital",
+      "label" : "Modal pendiri",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "chart_of_accounts:EQUITY",
+        "computedBy" : "FasternetDashboardReadService#founderCapital"
+      },
+      "notes" : "founder-capital COA mapping has not been confirmed by the Finance Controller"
+    },
+    "kur.installmentDue.next" : {
+      "key" : "kur.installmentDue.next",
+      "label" : "Angsuran KUR berikutnya",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-loan-master",
+        "computedBy" : "FasternetDashboardReadService#kur"
+      },
+      "notes" : "KUR loan master and verified installment schedule are not implemented yet"
+    },
+    "kur.nextDue.date" : {
+      "key" : "kur.nextDue.date",
+      "label" : "Jatuh tempo berikutnya",
+      "value" : null,
+      "unit" : "text",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-loan-master",
+        "computedBy" : "FasternetDashboardReadService#kur"
+      },
+      "notes" : "KUR loan master and verified installment schedule are not implemented yet"
+    },
+    "kur.nextDue.amount" : {
+      "key" : "kur.nextDue.amount",
+      "label" : "Nominal jatuh tempo berikutnya",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-loan-master",
+        "computedBy" : "FasternetDashboardReadService#kur"
+      },
+      "notes" : "KUR loan master and verified installment schedule are not implemented yet"
+    },
+    "kur.nextDue.daysRemaining" : {
+      "key" : "kur.nextDue.daysRemaining",
+      "label" : "Sisa hari",
+      "value" : null,
+      "unit" : "count",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-loan-master",
+        "computedBy" : "FasternetDashboardReadService#kur"
+      },
+      "notes" : "KUR loan master and verified installment schedule are not implemented yet"
+    },
+    "kur.paid.count" : {
+      "key" : "kur.paid.count",
+      "label" : "Angsuran terbayar",
+      "value" : null,
+      "unit" : "count",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-payment-journals",
+        "computedBy" : "FasternetDashboardReadService#kur"
+      },
+      "notes" : "KUR loan master and evidenced payments are not implemented yet"
+    },
+    "kur.paid.total" : {
+      "key" : "kur.paid.total",
+      "label" : "Total terbayar",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-payment-journals",
+        "computedBy" : "FasternetDashboardReadService#kur"
+      },
+      "notes" : "KUR loan master and evidenced payments are not implemented yet"
+    },
+    "kur.lastPayment.status" : {
+      "key" : "kur.lastPayment.status",
+      "label" : "Status pembayaran terakhir",
+      "value" : null,
+      "unit" : "text",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-payment-journals",
+        "computedBy" : "FasternetDashboardReadService#kur"
+      },
+      "notes" : "no KUR payment has been recorded"
+    },
+    "kur.reserve.earmarked" : {
+      "key" : "kur.reserve.earmarked",
+      "label" : "Dana KUR yang disisihkan",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-reserve-tracker",
+        "computedBy" : "FasternetDashboardReadService#kurReserve"
+      },
+      "notes" : "reserve account/tag has not been configured by the Finance Controller"
+    },
+    "kur.reserve.gap" : {
+      "key" : "kur.reserve.gap",
+      "label" : "Gap reserve KUR",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "kur-reserve-tracker",
+        "computedBy" : "FasternetDashboardReadService#kurReserve"
+      },
+      "notes" : "reserve-gap formula and reserve accounts are not approved yet"
+    },
+    "subscribers.active" : {
+      "key" : "subscribers.active",
+      "label" : "Pelanggan aktif",
+      "value" : null,
+      "unit" : "count",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "subscriber-master",
+        "computedBy" : "BillingService#activeSubscribers"
+      },
+      "notes" : "no subscriber master exists in v1"
+    },
+    "subscribers.new.period" : {
+      "key" : "subscribers.new.period",
+      "label" : "Pelanggan baru",
+      "value" : null,
+      "unit" : "count",
+      "status" : "unavailable",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "subscriber-master",
+        "computedBy" : "BillingService#newSubscribers"
+      },
+      "notes" : "no subscriber master exists in v1"
+    },
+    "subscribers.cancelled.period" : {
+      "key" : "subscribers.cancelled.period",
+      "label" : "Pelanggan berhenti",
+      "value" : null,
+      "unit" : "count",
+      "status" : "unavailable",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "subscriber-master",
+        "computedBy" : "BillingService#cancelledSubscribers"
+      },
+      "notes" : "no subscriber master exists in v1"
+    },
+    "billing.mrr" : {
+      "key" : "billing.mrr",
+      "label" : "MRR",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "invoice-mapping",
+        "computedBy" : "BillingService#mrr"
+      },
+      "notes" : "recurring-plan mapping has not been approved"
+    },
+    "billing.invoiced.period" : {
+      "key" : "billing.invoiced.period",
+      "label" : "Ditagihkan periode",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "invoice-mapping",
+        "computedBy" : "BillingService#invoiced"
+      },
+      "notes" : "billing mapping has not been confirmed"
+    },
+    "billing.collected.period" : {
+      "key" : "billing.collected.period",
+      "label" : "Terkumpul periode",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "from" : "2024-06-01",
+        "to" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "invoice-mapping",
+        "computedBy" : "BillingService#collected"
+      },
+      "notes" : "billing mapping has not been confirmed"
+    },
+    "billing.outstanding" : {
+      "key" : "billing.outstanding",
+      "label" : "Piutang tagihan",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "invoice-mapping",
+        "computedBy" : "BillingService#outstanding"
+      },
+      "notes" : "billing mapping has not been confirmed"
+    },
+    "billing.overdue" : {
+      "key" : "billing.overdue",
+      "label" : "Tagihan jatuh tempo",
+      "value" : null,
+      "unit" : "IDR",
+      "status" : "unavailable",
+      "period" : {
+        "asOf" : "2024-06-30"
+      },
+      "source" : {
+        "system" : "balaka",
+        "kind" : "none",
+        "ref" : "invoice-mapping",
+        "computedBy" : "BillingService#overdue"
+      },
+      "notes" : "billing mapping has not been confirmed"
+    }
+  },
+  "series" : {
+    "periods" : [ "2024-03", "2024-04", "2024-05", "2024-06" ],
+    "cash" : [ "195000000.00", "215000000.00", "211000000.00", "211000000.00" ],
+    "reserve" : [ null, null, null, null ],
+    "revenue" : [ "43000000.00", "22000000.00", "12000000.00", "0.00" ],
+    "expense" : [ "10000000.00", "2000000.00", "16000000.00", "1000000.00" ],
+    "cash.accounts" : [ {
+      "accountCode" : "1.1.01",
+      "accountName" : "Kas",
+      "balance" : "118000000.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.02",
+      "accountName" : "Bank BCA",
+      "balance" : "93000000.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.03",
+      "accountName" : "Bank BNI",
+      "balance" : "0.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.04",
+      "accountName" : "Piutang Usaha",
+      "balance" : "0.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.05",
+      "accountName" : "Asuransi Dibayar Dimuka",
+      "balance" : "0.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.06",
+      "accountName" : "Sewa Dibayar Dimuka",
+      "balance" : "0.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.07",
+      "accountName" : "Langganan Dibayar Dimuka",
+      "balance" : "0.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.08",
+      "accountName" : "Piutang Pendapatan",
+      "balance" : "0.00",
+      "status" : "posted"
+    }, {
+      "accountCode" : "1.1.09",
+      "accountName" : "PPN Masukan",
+      "balance" : "0.00",
+      "status" : "posted"
+    } ]
+  },
+  "missing" : [ {
+    "key" : "profitMargin.period",
+    "reason" : "revenue is zero, so the margin is undefined",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "equity.founderCapital",
+    "reason" : "founder-capital COA mapping has not been confirmed by the Finance Controller",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "kur.installmentDue.next",
+    "reason" : "KUR loan master and verified installment schedule are not implemented yet",
+    "owner" : "Backend Engineer"
+  }, {
+    "key" : "kur.nextDue.date",
+    "reason" : "KUR loan master and verified installment schedule are not implemented yet",
+    "owner" : "Backend Engineer"
+  }, {
+    "key" : "kur.nextDue.amount",
+    "reason" : "KUR loan master and verified installment schedule are not implemented yet",
+    "owner" : "Backend Engineer"
+  }, {
+    "key" : "kur.nextDue.daysRemaining",
+    "reason" : "KUR loan master and verified installment schedule are not implemented yet",
+    "owner" : "Backend Engineer"
+  }, {
+    "key" : "kur.paid.count",
+    "reason" : "KUR loan master and evidenced payments are not implemented yet",
+    "owner" : "Backend Engineer"
+  }, {
+    "key" : "kur.paid.total",
+    "reason" : "KUR loan master and evidenced payments are not implemented yet",
+    "owner" : "Backend Engineer"
+  }, {
+    "key" : "kur.lastPayment.status",
+    "reason" : "no KUR payment has been recorded",
+    "owner" : "Backend Engineer"
+  }, {
+    "key" : "kur.reserve.earmarked",
+    "reason" : "reserve account/tag has not been configured by the Finance Controller",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "kur.reserve.gap",
+    "reason" : "reserve-gap formula and reserve accounts are not approved yet",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "subscribers.active",
+    "reason" : "no subscriber master exists in v1",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "subscribers.new.period",
+    "reason" : "no subscriber master exists in v1",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "subscribers.cancelled.period",
+    "reason" : "no subscriber master exists in v1",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "billing.mrr",
+    "reason" : "recurring-plan mapping has not been approved",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "billing.invoiced.period",
+    "reason" : "billing mapping has not been confirmed",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "billing.collected.period",
+    "reason" : "billing mapping has not been confirmed",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "billing.outstanding",
+    "reason" : "billing mapping has not been confirmed",
+    "owner" : "Finance Controller"
+  }, {
+    "key" : "billing.overdue",
+    "reason" : "billing mapping has not been confirmed",
+    "owner" : "Finance Controller"
+  } ]
+}

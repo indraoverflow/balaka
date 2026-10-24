@@ -106,7 +106,6 @@ Returns the envelope with these figure keys:
 | key | unit | Source | v1 status |
 |---|---|---|---|
 | `cash.total` | IDR | cash/bank COA balances | `posted` |
-| `cash.accounts` | series | per-account balances | `posted` |
 | `revenue.period` | IDR | income statement revenue | `posted` |
 | `expense.period` | IDR | income statement expense | `posted` |
 | `netProfit.period` | IDR | revenue − expense | `posted` |
@@ -129,6 +128,10 @@ Returns the envelope with these figure keys:
 Every unavailable key is still emitted (with `value: null`, `status: "unavailable"` and a
 `missing` entry) so the frontend can render an explicit "data not available" state instead
 of a blank panel.
+
+`cash.accounts` is **not** a figure. Per-account cash balances live only in
+`series.cash.accounts` (see §4); `cash.total` remains the scalar figure. Consumers must not
+expect a scalar `figures["cash.accounts"]`.
 
 ### 3.2 `GET /api/fasternet/v1/kur/schedule`
 
@@ -220,28 +223,72 @@ subscriber count.
 
 ## 4. Series (charts)
 
-`series` contains named arrays with parallel `periods`:
+`series` contains a block-level `status` plus named arrays with parallel `periods`:
 
 ```json
 {
+  "status": "posted",
   "periods": ["2026-07", "2026-08", "2026-09", "2026-10"],
   "cash":    ["0.00", "0.00", "0.00", "12500000.00"],
   "reserve": [null, null, null, null],
   "revenue": ["0.00", "0.00", "0.00", "8000000.00"],
-  "expense": ["0.00", "0.00", "0.00", "3000000.00"]
+  "expense": ["0.00", "0.00", "0.00", "3000000.00"],
+  "cash.accounts": [
+    { "accountCode": "1-1001", "accountName": "Kas", "balance": "1000000.00", "status": "posted" }
+  ]
 }
 ```
 
-Rules: every series has the same length as `periods`; unavailable points are `null`, not
-`0`; series values are decimal strings.
+**Status and provenance (F6).** v1 series are **posted-only**. Every non-null point is a
+balance/flow computed only from `POSTED`, non-voided journal entries; drafts and estimates
+are never mixed into a series. `series.status` is therefore:
+
+| value | Meaning |
+|---|---|
+| `posted` | At least one point is derivable and every non-null point is posted |
+| `unavailable` | No point is derivable; all points are `null` |
+
+A `null` point means that specific period is unavailable; it is never rendered as `0`.
+There is no series-level `draft`/`estimate` state in v1. If a future series needs one, it
+is an additive change that also adds a separate series rather than mixing states.
+
+Provenance per series in v1:
+
+| array | Derivation | Non-null point status |
+|---|---|---|
+| `cash` | `DashboardService#calculateCashBalance` at each month end (current month at `asOf`) | `posted` |
+| `revenue` | `ReportService#generateIncomeStatement` monthly totalRevenue | `posted` |
+| `expense` | `ReportService#generateIncomeStatement` monthly totalExpense | `posted` |
+| `reserve` | KUR reserve tracker (FAS-23); all `null` until configured | `posted` or `null` |
+
+**`series.cash.accounts` (F3).** Per-account cash/bank balances are an array of objects,
+never a scalar figure:
+
+```json
+{ "accountCode": "1-1001", "accountName": "Kas", "balance": "1000000.00", "status": "posted" }
+```
+
+| field | type | notes |
+|---|---|---|
+| `accountCode` | string | COA code |
+| `accountName` | string | COA name |
+| `balance` | decimal string | debit-normal balance as of `asOf` |
+| `status` | enum | `posted` in v1 |
+
+The sum of `cash.accounts[].balance` equals `figures["cash.total"].value`. When no cash/bank
+account is configured the array is empty and both `cash.total` and `missing["cash.accounts"]`
+carry the reason.
+
+Rules: every series array has the same length as `periods`; unavailable points are `null`,
+not `0`; series values are decimal strings.
 
 ## 5. Error responses
 
 | HTTP | Body | When |
 |---|---|---|
 | 400 | `{"error":"invalid_request","message":"..."}` | bad/missing `asOf`/`period` |
-| 401 | `{"error":"unauthorized"}` | no/invalid Bearer token or session |
-| 403 | `{"error":"forbidden","message":"REPORT_VIEW required"}` | insufficient permission |
+| 401 | `{"error":"unauthorized","message":"Authentication required"}` | no/invalid Bearer token or session (SecurityConfig API entry point) |
+| 403 | `{"error":"FORBIDDEN","message":"The token user's role lacks the required permission"}` | authenticated but token scope does not resolve to `REPORT_VIEW` (`ApiExceptionHandler`) |
 | 422 | `{"error":"period_closed","message":"..."}` | requested period is closed and the figure cannot be produced under policy |
 | 503 | `{"error":"ledger_unavailable","message":"..."}` | DB unavailable; never substitute stale/fabricated values |
 
@@ -270,3 +317,39 @@ Rules: every series has the same length as `periods`; unavailable points are `nu
    orange/red); until approved thresholds are `estimate` + `notes: "unconfigured"`.
 3. CTO: confirm whether the dashboard service account uses a dedicated API client with
    only `REPORT_VIEW`.
+
+## 9. Auth and local integration
+
+The API is read-only, but it is still authenticated. There is no anonymous dashboard mode.
+
+| Item | v1 rule |
+|---|---|
+| Scheme | `Authorization: Bearer <token>`; session cookie is accepted for same-host interactive use only |
+| Scope | `analysis:read` (the existing `ApiScope` that resolves to `REPORT_VIEW`) |
+| Account | A **dedicated** API client, not a founder's personal login. Created under Pengaturan › API Klien (`api_clients`), with an acting service user that holds `REPORT_VIEW` |
+| Token | Obtained with the OAuth2 `client_credentials` grant: `POST /api/oauth/token` (`grant_type=client_credentials`, `client_id`, `client_secret`). Tokens are short-lived and opaque |
+| Secret storage | Client secret and issued token live server-side only: the dashboard BFF reads `DASHBOARD_TOKEN_FILE` (mode 600, outside the repo, e.g. `/etc/fasternet/dashboard-token`) or `DASHBOARD_TOKEN`. Neither value is committed, logged, or sent to the browser |
+| Dev base URL | Balaka dev instance `http://127.0.0.1:10001`; dashboard BFF: `BALAKA_API_URL=http://127.0.0.1:10001` (see `/paperclip/fasternet/dashboard/README.md`) |
+| Production base URL | Set by deploy config, not in source. The BFF calls Balaka over the internal network |
+| Rotation | Deactivate the API client under Pengaturan › API Klien, create a new secret (shown once), replace the token file, restart the BFF |
+
+Local verification sequence (no secret in git):
+
+```bash
+# 1. Balaka dev instance (test profile + local PostgreSQL)
+curl -s http://127.0.0.1:10001/actuator/health
+
+# 2. Exchange a dedicated client's credentials for a short-lived token (run on the host)
+TOKEN=$(curl -s -X POST http://127.0.0.1:10001/api/oauth/token \
+  -d grant_type=client_credentials \
+  -d client_id="$DASHBOARD_CLIENT_ID" \
+  -d client_secret="$DASHBOARD_CLIENT_SECRET" | jq -r .access_token)
+
+# 3. Call the contract endpoint
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:10001/api/fasternet/v1/overview?asOf=2026-10-24"
+```
+
+`DASHBOARD_CLIENT_ID`/`DASHBOARD_CLIENT_SECRET` are host environment variables, not repo
+files. A 401 means no/invalid token; a 403 means the client scope is not `analysis:read`
+(→ `REPORT_VIEW`). Out of scope: bank credentials, transfer initiation, writes of any kind.

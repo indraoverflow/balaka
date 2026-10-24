@@ -1,6 +1,7 @@
 package com.artivisi.accountingfinance.controller.api;
 
 import com.artivisi.accountingfinance.TestcontainersConfiguration;
+import com.artivisi.accountingfinance.security.CspNonceFilter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,7 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -57,7 +59,10 @@ class FasternetDashboardApiControllerTest {
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+                .addFilters(webApplicationContext.getBean(CspNonceFilter.class))
+                .apply(springSecurity())
+                .build();
     }
 
     @Test
@@ -75,8 +80,12 @@ class FasternetDashboardApiControllerTest {
                 .andExpect(jsonPath("$.figures['kur.installmentDue.next'].status").value("unavailable"))
                 .andExpect(jsonPath("$.figures['kur.installmentDue.next'].value").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.figures['billing.outstanding'].status").value("unavailable"))
+                .andExpect(jsonPath("$.series.status").value("posted"))
                 .andExpect(jsonPath("$.series.periods.length()").value(4))
                 .andExpect(jsonPath("$.series.reserve[0]").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.series['cash.accounts']").isArray())
+                .andExpect(jsonPath("$.series['cash.accounts'][0].accountCode").isString())
+                .andExpect(jsonPath("$.series['cash.accounts'][0].balance").isString())
                 .andExpect(jsonPath("$.missing").isArray())
                 .andReturn();
 
@@ -129,7 +138,7 @@ class FasternetDashboardApiControllerTest {
     void missingReportViewIs403() throws Exception {
         mockMvc.perform(get(OVERVIEW))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("forbidden"));
+                .andExpect(jsonPath("$.error").value("FORBIDDEN"));
     }
 
     @Test
