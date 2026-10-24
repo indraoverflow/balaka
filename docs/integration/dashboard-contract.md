@@ -182,6 +182,12 @@ Returns the loan master + installment rows from FAS-23.
 confirmed. `amount` is the contractual installment; `principal`/`interest`/`fee` are null
 until the official schedule supplies them.
 
+`installments[].status` is lowercase (`unpaid`, `partial`, `paid`, `overpaid`). If no
+`loanId` is supplied the endpoint uses the single active KUR loan and returns `400
+invalid_request` when zero or several active loans exist, rather than guessing. Both KUR
+endpoints also return a `missing[]` array of `{key, reason, owner}` for figures that
+cannot be derived; entries never replace a missing value with zero.
+
 Control figures derived from the schedule:
 
 | key | unit | Derivation | status |
