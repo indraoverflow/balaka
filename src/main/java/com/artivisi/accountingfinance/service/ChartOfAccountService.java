@@ -2,8 +2,11 @@ package com.artivisi.accountingfinance.service;
 
 import com.artivisi.accountingfinance.entity.ChartOfAccount;
 import com.artivisi.accountingfinance.enums.AccountType;
+import com.artivisi.accountingfinance.enums.CashBankSource;
 import com.artivisi.accountingfinance.enums.NormalBalance;
+import com.artivisi.accountingfinance.exception.InvalidCashBankAccountException;
 import com.artivisi.accountingfinance.repository.ChartOfAccountRepository;
+import com.artivisi.accountingfinance.repository.CompanyBankAccountRepository;
 import com.artivisi.accountingfinance.repository.JournalEntryRepository;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
@@ -25,6 +28,7 @@ public class ChartOfAccountService {
 
     private final ChartOfAccountRepository chartOfAccountRepository;
     private final JournalEntryRepository journalEntryRepository;
+    private final CompanyBankAccountRepository companyBankAccountRepository;
 
     public List<ChartOfAccount> findAll() {
         return chartOfAccountRepository.findByActiveOrderByAccountCodeAsc(true);
@@ -56,6 +60,10 @@ public class ChartOfAccountService {
 
     public List<ChartOfAccount> findTransactableAccounts() {
         return chartOfAccountRepository.findAllTransactableAccounts();
+    }
+
+    public List<ChartOfAccount> findAssetAccounts() {
+        return chartOfAccountRepository.findAssetAccounts();
     }
 
     public Page<ChartOfAccount> search(String search, Boolean active, Pageable pageable) {
@@ -101,6 +109,12 @@ public class ChartOfAccountService {
             account.setNormalBalance(deriveNormalBalance(account.getAccountType()));
         }
 
+        boolean cashBank = Boolean.TRUE.equals(account.getIsCashBank());
+        validateCashBankEligibility(account.getAccountType(), Boolean.TRUE.equals(account.getIsHeader()),
+                cashBank, false, account.getAccountCode());
+        account.setIsCashBank(cashBank);
+        account.setCashBankSource(cashBank ? CashBankSource.EXPLICIT : null);
+
         return chartOfAccountRepository.save(account);
     }
 
@@ -136,7 +150,98 @@ public class ChartOfAccountService {
             existing.setNormalBalance(accountData.getNormalBalance());
         }
 
+        applyExplicitCashBankFlag(existing, Boolean.TRUE.equals(accountData.getIsCashBank()));
+
         return chartOfAccountRepository.save(existing);
+    }
+
+    /**
+     * Marks an account as cash because a company bank account points at it.
+     * Bank-linked accounts must be ASSET leaves; the caller is responsible for
+     * persisting the bank account that establishes the link.
+     */
+    @Transactional
+    public void applyBankLink(ChartOfAccount account) {
+        if (account == null) {
+            return;
+        }
+        validateCashBankEligibility(account.getAccountType(), Boolean.TRUE.equals(account.getIsHeader()),
+                true, hasChildren(account.getId()), account.getAccountCode());
+
+        if (!Boolean.TRUE.equals(account.getIsCashBank())) {
+            account.setIsCashBank(true);
+            account.setCashBankSource(CashBankSource.BANK_LINK);
+            chartOfAccountRepository.save(account);
+        } else if (account.getCashBankSource() == null) {
+            // Legacy flag with no provenance (for example a canonical seed): keep
+            // it durable so a later unlink cannot remove an existing cash account.
+            account.setCashBankSource(CashBankSource.MIGRATED);
+            chartOfAccountRepository.save(account);
+        }
+    }
+
+    /**
+     * Clears an automatically bank-linked cash flag when the last company bank
+     * account stops pointing at the account. Explicit and migrated flags are kept.
+     */
+    @Transactional
+    public void releaseBankLink(ChartOfAccount account) {
+        if (account == null || !Boolean.TRUE.equals(account.getIsCashBank())) {
+            return;
+        }
+        if (account.getCashBankSource() == CashBankSource.BANK_LINK
+                && !companyBankAccountRepository.existsByGlAccount_Id(account.getId())) {
+            account.setIsCashBank(false);
+            account.setCashBankSource(null);
+            chartOfAccountRepository.save(account);
+        }
+    }
+
+    public boolean isLinkedToBankAccount(UUID id) {
+        return companyBankAccountRepository.existsByGlAccount_Id(id);
+    }
+
+    private void applyExplicitCashBankFlag(ChartOfAccount existing, boolean desired) {
+        if (desired) {
+            validateCashBankEligibility(existing.getAccountType(), Boolean.TRUE.equals(existing.getIsHeader()),
+                    true, hasChildren(existing.getId()), existing.getAccountCode());
+            if (!Boolean.TRUE.equals(existing.getIsCashBank())) {
+                existing.setCashBankSource(CashBankSource.EXPLICIT);
+            } else if (existing.getCashBankSource() == null) {
+                existing.setCashBankSource(CashBankSource.MIGRATED);
+            }
+            existing.setIsCashBank(true);
+            return;
+        }
+
+        if (Boolean.TRUE.equals(existing.getIsCashBank())) {
+            if (isLinkedToBankAccount(existing.getId())) {
+                throw new InvalidCashBankAccountException(
+                        "Akun " + existing.getAccountCode()
+                                + " masih terhubung ke rekening bank; lepaskan tautan rekening terlebih dahulu");
+            }
+            existing.setIsCashBank(false);
+            existing.setCashBankSource(null);
+        }
+    }
+
+    private void validateCashBankEligibility(AccountType accountType, boolean isHeader, boolean cashBank,
+                                             boolean hasChildren, String accountCode) {
+        if (!cashBank) {
+            return;
+        }
+        if (accountType != AccountType.ASSET) {
+            throw new InvalidCashBankAccountException(
+                    "Akun kas/bank " + accountCode + " harus bertipe ASSET");
+        }
+        if (isHeader) {
+            throw new InvalidCashBankAccountException(
+                    "Akun header " + accountCode + " tidak boleh ditandai sebagai kas/bank");
+        }
+        if (hasChildren) {
+            throw new InvalidCashBankAccountException(
+                    "Akun kas/bank " + accountCode + " harus berupa akun leaf (tanpa akun anak)");
+        }
     }
 
     @Transactional
@@ -149,6 +254,10 @@ public class ChartOfAccountService {
     @Transactional
     public void deactivate(UUID id) {
         ChartOfAccount account = findById(id);
+        if (isLinkedToBankAccount(id)) {
+            throw new IllegalStateException(
+                    "Cannot deactivate account linked to a company bank account; unlink the bank account first");
+        }
         account.setActive(false);
         chartOfAccountRepository.save(account);
     }
@@ -161,6 +270,10 @@ public class ChartOfAccountService {
         }
         if (hasJournalEntries(id)) {
             throw new IllegalStateException("Cannot delete account with journal entries");
+        }
+        if (isLinkedToBankAccount(id)) {
+            throw new IllegalStateException(
+                    "Cannot delete account linked to a company bank account; unlink the bank account first");
         }
         account.softDelete();
         chartOfAccountRepository.save(account);

@@ -284,6 +284,25 @@ The sum of `cash.accounts[].balance` equals `figures["cash.total"].value`. When 
 account is configured the array is empty and both `cash.total` and `missing["cash.accounts"]`
 carry the reason.
 
+**Runtime maintenance of the cash universe (FAS-87).** `is_cash_bank` is not only a
+migration backfill:
+
+- The chart-of-accounts create/edit form lets an operator mark an ASSET leaf as cash/bank.
+  This sets `cash_bank_source = EXPLICIT` and writes a settings audit event. Headers and
+  non-ASSET accounts are rejected.
+- Creating or re-pointing a `company_bank_accounts` row at an ASSET leaf sets
+  `is_cash_bank = true` with `cash_bank_source = BANK_LINK` (CSV import follows the same
+  rule). The UI warns that the linked account joins the cash universe.
+- Deleting or re-pointing the bank account clears the flag **only** when its source is
+  `BANK_LINK` and no other bank account still links it. `EXPLICIT` (operator decision) and
+  `MIGRATED` (V007 backfill) flags stay cash so an unlink cannot silently understate cash.
+  An explicit un-flag is rejected while a bank account still links the account.
+- The ZIP chart-of-accounts export/import carries `is_cash_bank`, so a round-trip keeps the
+  flag; imported flags are treated as `EXPLICIT`.
+
+The Finance Controller still owns the FASTERNET cash-account mapping and must confirm the
+universe after any account change.
+
 Rules: every series array has the same length as `periods`; unavailable points are `null`,
 not `0`; series values are decimal strings.
 
