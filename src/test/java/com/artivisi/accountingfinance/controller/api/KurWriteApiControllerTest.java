@@ -207,22 +207,59 @@ class KurWriteApiControllerTest {
         assertThat(events).hasSize(1);
         assertThat(events.getFirst().getDetails())
                 .contains("provenance=FOUNDER_ESTIMATE->VERIFIED")
+                .contains("agreementDocumentKind=signed-agreement")
+                .contains("scheduleDocumentKind=lender-schedule")
                 .contains("signed KUR agreement and BRI schedule reviewed");
     }
 
     @Test
-    @DisplayName("a document upload returns a usable document id for the loan")
-    void documentUploadReturnsId() throws Exception {
+    @DisplayName("verification rejects the same document id for agreement and schedule")
+    void verificationRejectsIdenticalDocuments() throws Exception {
+        KurLoan loan = createLoan(null, null);
+        Document document = document("agreement.pdf");
+
+        mockMvc.perform(post("/api/fasternet/v1/kur/loans/" + loan.getId() + "/verify").with(csrf())
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors
+                                .user("finance").authorities(
+                                        new org.springframework.security.core.authority.SimpleGrantedAuthority("SCOPE_kur:verify"),
+                                        new org.springframework.security.core.authority.SimpleGrantedAuthority("KUR_VERIFY")))
+                        .contentType("application/json")
+                        .content("{\"agreementDocumentId\":\"" + document.getId()
+                                + "\",\"scheduleDocumentId\":\"" + document.getId()
+                                + "\",\"reason\":\"same file\"}"))
+                .andExpect(status().isBadRequest());
+
+        flushAndClear();
+        assertThat(loanRepository.findById(loan.getId()).orElseThrow().getProvenance())
+                .isEqualTo(KurLoanProvenance.FOUNDER_ESTIMATE);
+        assertThat(audits(AuditEventType.KUR_LOAN_VERIFY)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a document upload returns a usable document id and records a KUR audit event")
+    void documentUploadReturnsIdAndIsAudited() throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", "kredit-ur.pdf", "application/pdf",
                 "%PDF-1.4\nKUR agreement\n".getBytes(StandardCharsets.UTF_8));
 
-        MvcResult result = mockMvc.perform(multipart("/api/fasternet/v1/kur/documents").file(file).with(csrf()))
+        MvcResult result = mockMvc.perform(multipart("/api/fasternet/v1/kur/documents")
+                        .file(file)
+                        .param("purpose", "signed_agreement")
+                        .with(csrf()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNotEmpty())
                 .andReturn();
 
         String id = com.jayway.jsonpath.JsonPath.read(result.getResponse().getContentAsString(), "$.id");
         assertThat(documentRepository.findById(UUID.fromString(id))).isPresent();
+
+        flushAndClear();
+        List<SecurityAuditLog> events = audits(AuditEventType.KUR_DOCUMENT_UPLOAD);
+        assertThat(events).hasSize(1);
+        assertThat(events.getFirst().getUsername()).isEqualTo("finance");
+        assertThat(events.getFirst().getDetails())
+                .contains("documentId=" + id)
+                .contains("purpose=SIGNED_AGREEMENT")
+                .contains("actor=finance");
     }
 
     // ------------------------------------------------------------------
@@ -333,6 +370,32 @@ class KurWriteApiControllerTest {
     }
 
     @Test
+    @DisplayName("a payment replay with a changed amount is 409 and leaves the stored payment intact")
+    void conflictingPaymentReplayIs409() throws Exception {
+        KurLoan loan = createLoan(null, null);
+        KurInstallment installment = service.importScheduleRow(loan.getId(), new KurLoanService.ScheduleRow(
+                1, FIRST_DUE, INSTALLMENT, null, null, null,
+                KurScheduleSourceKind.LENDER_SCHEDULE, "bri-row-1"));
+
+        mockMvc.perform(post(paymentPath(loan, installment)).with(csrf())
+                        .contentType("application/json")
+                        .content(paymentJson("2026-11-10", "1000000.00", "trf-1")))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post(paymentPath(loan, installment)).with(csrf())
+                        .contentType("application/json")
+                        .content(paymentJson("2026-11-10", "2000000.00", "trf-1")))
+                .andExpect(status().isConflict());
+
+        flushAndClear();
+        KurInstallment after = installmentRepository.findById(installment.getId()).orElseThrow();
+        assertThat(after.getPaidAmount()).isEqualByComparingTo("1000000.00");
+        assertThat(paymentRepository.findByInstallmentIdAndSourceRef(installment.getId(), "trf-1")
+                .orElseThrow().getAmount()).isEqualByComparingTo("1000000.00");
+        assertThat(audits(AuditEventType.KUR_PAYMENT_RECORD)).hasSize(1);
+    }
+
+    @Test
     @DisplayName("a payment on an installment belonging to another loan is rejected")
     void paymentOnWrongLoanIsRejected() throws Exception {
         KurLoan loan = createLoan(null, null);
@@ -385,6 +448,32 @@ class KurWriteApiControllerTest {
         assertThat(unchanged.getStatus()).isEqualTo(KurInstallmentStatus.UNPAID);
         assertThat(unchanged.getPaidAmount()).isEqualByComparingTo("0.00");
         assertThat(audits(AuditEventType.KUR_RESERVE_RECORD)).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("a reserve replay with a changed amount or kind is 409 and leaves the bucket intact")
+    void conflictingReserveReplayIs409() throws Exception {
+        KurLoan loan = createLoan(null, null);
+
+        mockMvc.perform(post(reservePath(loan)).with(csrf())
+                        .contentType("application/json")
+                        .content(reserveJson("EARMARK", "1000000.00", "reserve-1")))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post(reservePath(loan)).with(csrf())
+                        .contentType("application/json")
+                        .content(reserveJson("EARMARK", "1500000.00", "reserve-1")))
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(post(reservePath(loan)).with(csrf())
+                        .contentType("application/json")
+                        .content(reserveJson("RELEASE", "1000000.00", "reserve-1")))
+                .andExpect(status().isConflict());
+
+        flushAndClear();
+        assertThat(audits(AuditEventType.KUR_RESERVE_RECORD)).hasSize(1);
+        assertThat(service.reserve(loan.getId(), LocalDate.of(2026, 10, 31))
+                .figures().get("reserve.earmarked").value()).isEqualTo("1000000.00");
     }
 
     // ------------------------------------------------------------------

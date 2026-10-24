@@ -12,6 +12,7 @@ import com.artivisi.accountingfinance.enums.KurLoanProvenance;
 import com.artivisi.accountingfinance.enums.KurReserveEntryKind;
 import com.artivisi.accountingfinance.enums.KurScheduleSourceKind;
 import com.artivisi.accountingfinance.repository.KurInstallmentRepository;
+import com.artivisi.accountingfinance.repository.KurPaymentRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +50,9 @@ class KurLoanServiceIntegrationTest {
     @Autowired
     private KurInstallmentRepository installmentRepository;
 
+    @Autowired
+    private KurPaymentRepository paymentRepository;
+
     @Test
     @DisplayName("founder figures start as founder-estimate, not confirmed")
     void newLoanIsFounderEstimate() {
@@ -64,11 +68,14 @@ class KurLoanServiceIntegrationTest {
     }
 
     @Test
-    @DisplayName("a verified loan without attached documents is rejected")
-    void verifiedNeedsDocuments() {
+    @DisplayName("the domain refuses to create a verified or bank-confirmed loan directly")
+    void loanCreationOnlyAcceptsFounderEstimate() {
         assertThatThrownBy(() -> createLoan(KurLoanProvenance.VERIFIED))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("signed agreement");
+                .hasMessageContaining("only records FOUNDER_ESTIMATE");
+        assertThatThrownBy(() -> createLoan(KurLoanProvenance.BANK_CONFIRMED))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("only records FOUNDER_ESTIMATE");
     }
 
     @Test
@@ -160,6 +167,47 @@ class KurLoanServiceIntegrationTest {
 
         assertThat(installments(loan.getId()).getFirst().getStatus()).isEqualTo(KurInstallmentStatus.UNPAID);
         assertThat(installments(loan.getId()).getFirst().getPaidAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("a payment replay with a changed amount is rejected, not silently ignored")
+    void conflictingPaymentReplayIsRejected() {
+        KurLoan loan = createLoan(KurLoanProvenance.FOUNDER_ESTIMATE);
+        KurInstallment installment = service.importScheduleRow(loan.getId(), row(1, FIRST_DUE, "lender-row-1"));
+        service.recordPayment(loan.getId(), installment.getId(), payment("1000000.00", "2026-11-10", "trf-1"));
+
+        assertThatThrownBy(() -> service.recordPayment(loan.getId(), installment.getId(),
+                payment("2000000.00", "2026-11-10", "trf-1")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("different values");
+
+        KurInstallment after = installments(loan.getId()).getFirst();
+        assertThat(after.getPaidAmount()).isEqualByComparingTo("1000000.00");
+        assertThat(paymentRepository.findByInstallmentIdAndSourceRef(installment.getId(), "trf-1")
+                .orElseThrow().getAmount()).isEqualByComparingTo("1000000.00");
+    }
+
+    @Test
+    @DisplayName("a reserve replay with a changed kind or amount is rejected, not silently ignored")
+    void conflictingReserveReplayIsRejected() {
+        KurLoan loan = createLoan(KurLoanProvenance.FOUNDER_ESTIMATE);
+        service.recordReserve(loan.getId(), new KurLoanService.ReserveCommand(
+                LocalDate.of(2026, 10, 25), KurReserveEntryKind.EARMARK,
+                new BigDecimal("1000000.00"), "sisihkan", "reserve-1"));
+
+        assertThatThrownBy(() -> service.recordReserve(loan.getId(), new KurLoanService.ReserveCommand(
+                LocalDate.of(2026, 10, 25), KurReserveEntryKind.EARMARK,
+                new BigDecimal("1500000.00"), "sisihkan", "reserve-1")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("different values");
+        assertThatThrownBy(() -> service.recordReserve(loan.getId(), new KurLoanService.ReserveCommand(
+                LocalDate.of(2026, 10, 25), KurReserveEntryKind.RELEASE,
+                new BigDecimal("1000000.00"), "sisihkan", "reserve-1")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("different values");
+
+        KurReserveResponse reserve = service.reserve(loan.getId(), LocalDate.of(2026, 10, 31));
+        assertThat(reserve.figures().get("reserve.earmarked").value()).isEqualTo("1000000.00");
     }
 
     @Test
