@@ -227,9 +227,12 @@ cd deploy/ansible
 
 The check exits 1 when a `debug` task interpolates a credential name such as
 `admin_password_plain`, `db_password`, `document_encryption_key`,
-`app_remember_me_key`, `*_secret`, `*_token`, or a backup key. It is a static
-check for direct `{{ ... }}` references; indirect flows (loops, `set_fact`,
-`slurp`, command output) still require manual review during code review.
+`app_remember_me_key`, `*_secret`, `*_token`, or a backup key. Both `msg` and
+`var` are scanned, including Jinja references such as
+`var: "{{ admin_password_plain }}"`. It is a static check for direct `{{ ... }}`
+references; indirect flows (loops, `set_fact`, `slurp`, command output) still
+require manual review during code review. CI runs the same guard in the
+`deploy-lint` job, and its fixtures cover the `debug.var` regression.
 
 ## SSL Setup
 

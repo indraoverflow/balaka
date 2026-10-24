@@ -137,8 +137,10 @@ def scan_task(task: dict) -> tuple[str, set[str]]:
         for text in strings(debug.get("msg")):
             found |= referenced_secrets(text)
         var = debug.get("var")
-        if isinstance(var, str) and is_secret(var.strip()):
-            found.add(var.strip())
+        if isinstance(var, str):
+            found |= referenced_secrets(var)
+            if is_secret(var.strip()):
+                found.add(var.strip())
     elif isinstance(debug, str):
         found |= referenced_secrets(debug)
     return task_name, found
