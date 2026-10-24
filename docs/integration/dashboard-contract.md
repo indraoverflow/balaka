@@ -183,10 +183,11 @@ confirmed. `amount` is the contractual installment; `principal`/`interest`/`fee`
 until the official schedule supplies them.
 
 `installments[].status` is lowercase (`unpaid`, `partial`, `paid`, `overpaid`). If no
-`loanId` is supplied the endpoint uses the single active KUR loan and returns `400
-invalid_request` when zero or several active loans exist, rather than guessing. Both KUR
-endpoints also return a `missing[]` array of `{key, reason, owner}` for figures that
-cannot be derived; entries never replace a missing value with zero.
+`loanId` is supplied the endpoint uses the single active KUR loan. Zero active loans
+return `404 kur_loan_not_found`; several active loans return `400 invalid_request`
+instead of guessing. Both KUR endpoints also return a `missing[]` array of
+`{key, reason, owner}` for figures that cannot be derived; entries never replace a
+missing value with zero.
 
 Control figures derived from the schedule:
 

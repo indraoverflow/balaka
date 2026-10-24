@@ -480,7 +480,7 @@ public class KurLoanService {
         if (nextDue == null) {
             figures.put("obligation.nextDue", new KurReserveResponse.Figure(null, "unavailable"));
             missing.add(new KurReserveResponse.Missing(
-                    "obligation.nextDue", "no unpaid installment on or before asOf", "Finance Controller"));
+                    "obligation.nextDue", "no unpaid installment is recorded for this loan", "Finance Controller"));
         } else {
             figures.put("obligation.nextDue", new KurReserveResponse.Figure(
                     moneyString(nextDue.getAmount()),

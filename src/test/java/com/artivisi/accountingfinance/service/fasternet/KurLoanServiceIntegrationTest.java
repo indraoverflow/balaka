@@ -146,6 +146,23 @@ class KurLoanServiceIntegrationTest {
     }
 
     @Test
+    @DisplayName("a payment without evidence is rejected and leaves the installment unpaid")
+    void paymentWithoutEvidenceIsRejected() {
+        KurLoan loan = createLoan(KurLoanProvenance.FOUNDER_ESTIMATE);
+        KurInstallment installment = service.importScheduleRow(loan.getId(), row(1, FIRST_DUE, "lender-row-1"));
+
+        assertThatThrownBy(() -> service.recordPayment(loan.getId(), installment.getId(),
+                new KurLoanService.PaymentCommand(
+                        LocalDate.of(2026, 11, 20), INSTALLMENT, "BRI-TRF",
+                        "  ", "trf-no-evidence")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("evidenceRef");
+
+        assertThat(installments(loan.getId()).getFirst().getStatus()).isEqualTo(KurInstallmentStatus.UNPAID);
+        assertThat(installments(loan.getId()).getFirst().getPaidAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
     @DisplayName("a reserve release cannot take the earmarked bucket below zero")
     void reserveReleaseCannotGoNegative() {
         KurLoan loan = createLoan(KurLoanProvenance.FOUNDER_ESTIMATE);

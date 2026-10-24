@@ -133,6 +133,14 @@ class KurApiControllerTest {
     }
 
     @Test
+    @DisplayName("no active loan and no loanId is 404, not a fabricated schedule")
+    void noActiveLoanIs404() throws Exception {
+        mockMvc.perform(get("/api/fasternet/v1/kur/schedule"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("kur_loan_not_found"));
+    }
+
+    @Test
     @DisplayName("an unknown loan is 404")
     void unknownLoanIs404() throws Exception {
         mockMvc.perform(get("/api/fasternet/v1/kur/schedule")
