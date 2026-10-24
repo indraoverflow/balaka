@@ -60,6 +60,22 @@ Buka menu **Pengaturan** > **Audit Log**.
 - Log tidak bisa dihapus oleh user biasa
 - Hanya ADMIN yang bisa mengakses audit log
 
+### Pemisahan Tugas: Role Finance
+
+`FINANCE_CONTROLLER` memegang `KUR_WRITE` dan `KUR_VERIFY`; `ADMIN` tidak. Agar
+pemisahan ini tidak bisa dilewati lewat pengelolaan pengguna:
+
+- Tidak ada akun yang boleh mengubah role akunnya sendiri.
+- Pemberian/pencabutan `OWNER` dan `FINANCE_CONTROLLER` hanya boleh dilakukan oleh
+  akun yang sudah memegang `OWNER` atau `FINANCE_CONTROLLER`.
+- Reset password, perubahan status, dan penghapusan akun yang memegang role
+  finance juga memerlukan otoritas finance.
+- Percobaan yang ditolak dicatat sebagai audit keamanan dengan status gagal;
+  perubahan role yang berhasil mencatat aktor dan selisih role (role delta).
+
+Kebijakan dan prosedur bootstrap akun finance pertama:
+`docs/security/finance-role-assignment-policy.md`.
+
 ---
 
 ## Kebijakan Data (GDPR / UU PDP)

@@ -166,9 +166,28 @@ Buka menu **Pengguna** di sidebar.
 | Nama Lengkap | Nama tampilan |
 | Email | Alamat email |
 | Password | Password minimal 12 karakter |
-| Role | ADMIN/OWNER/ACCOUNTANT/STAFF/AUDITOR/EMPLOYEE |
+| Role | ADMIN/OWNER/FINANCE_CONTROLLER/ACCOUNTANT/STAFF/AUDITOR/EMPLOYEE |
 
 3. Klik **Simpan**
+
+### Pemisahan Tugas untuk Role Finance
+
+`OWNER` dan `FINANCE_CONTROLLER` adalah role finance. Hanya akun yang sudah
+memegang salah satu role tersebut yang boleh memberikan atau mencabutnya.
+Karena itu:
+
+- `ADMIN` **tidak dapat** menambahkan `OWNER` atau `FINANCE_CONTROLLER` ke akunnya
+  sendiri maupun ke akun lain, dan tidak dapat mengelola (reset password,
+  menonaktifkan, menghapus) akun yang memegang role finance.
+- Setiap akun **tidak dapat** mengubah role akunnya sendiri, termasuk mencabut
+  role-nya.
+- Akun `OWNER`/`FINANCE_CONTROLLER` pertama dibuat oleh operator deployment di
+  luar aplikasi (Ansible/`psql`) setelah ada persetujuan tertulis dari CEO dan
+  Finance Controller. Setelah itu, perubahan role finance dilakukan oleh pemegang
+  role finance melalui prosedur yang disetujui.
+
+Kebijakan lengkap dan status persetujuannya ada di
+`docs/security/finance-role-assignment-policy.md`.
 
 ### Sesi Perangkat (Device Sessions)
 
