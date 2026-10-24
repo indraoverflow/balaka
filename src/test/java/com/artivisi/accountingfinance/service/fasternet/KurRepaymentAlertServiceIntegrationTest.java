@@ -4,6 +4,7 @@ import com.artivisi.accountingfinance.TestcontainersConfiguration;
 import com.artivisi.accountingfinance.dto.fasternet.KurAlertResponse;
 import com.artivisi.accountingfinance.dto.fasternet.KurReserveResponse;
 import com.artivisi.accountingfinance.entity.ChartOfAccount;
+import com.artivisi.accountingfinance.entity.Document;
 import com.artivisi.accountingfinance.entity.JournalEntry;
 import com.artivisi.accountingfinance.entity.JournalTemplate;
 import com.artivisi.accountingfinance.entity.KurAlertPolicy;
@@ -15,7 +16,10 @@ import com.artivisi.accountingfinance.enums.KurLoanProvenance;
 import com.artivisi.accountingfinance.enums.KurReserveEntryKind;
 import com.artivisi.accountingfinance.enums.KurScheduleSourceKind;
 import com.artivisi.accountingfinance.enums.TransactionStatus;
+import com.artivisi.accountingfinance.entity.Document;
 import com.artivisi.accountingfinance.repository.ChartOfAccountRepository;
+import com.artivisi.accountingfinance.repository.DocumentRepository;
+import com.artivisi.accountingfinance.repository.DocumentRepository;
 import com.artivisi.accountingfinance.repository.JournalEntryRepository;
 import com.artivisi.accountingfinance.repository.JournalTemplateRepository;
 import com.artivisi.accountingfinance.repository.KurInstallmentRepository;
@@ -65,6 +69,9 @@ class KurRepaymentAlertServiceIntegrationTest {
 
     @Autowired
     private KurInstallmentRepository installmentRepository;
+
+    @Autowired
+    private DocumentRepository documentRepository;
 
     @Autowired
     private ChartOfAccountRepository chartOfAccountRepository;
@@ -495,14 +502,36 @@ class KurRepaymentAlertServiceIntegrationTest {
 
     private KurLoan createLoan(KurLoanProvenance provenance, LocalDate firstDue, BigDecimal installment) {
         boolean verified = provenance == KurLoanProvenance.VERIFIED;
-        return loanService.createLoan(new KurLoanService.CreateLoanCommand(
+        UUID agreementId = null;
+        UUID scheduleId = null;
+        if (verified) {
+            agreementId = document("agreement-" + UUID.randomUUID() + ".pdf").getId();
+            scheduleId = document("schedule-" + UUID.randomUUID() + ".pdf").getId();
+        }
+        KurLoan loan = loanService.createLoan(new KurLoanService.CreateLoanCommand(
                 "BRI", "KUR", null, "FASTERNET", "Indra",
                 new BigDecimal("99270000.00"), LocalDate.of(2026, 10, 21), 36, installment,
                 "MONTHLY", 36, firstDue, 21, LocalDate.of(2029, 10, 21),
                 null,
-                verified ? UUID.randomUUID() : null,
-                verified ? UUID.randomUUID() : null,
-                provenance, null));
+                agreementId,
+                scheduleId,
+                KurLoanProvenance.FOUNDER_ESTIMATE, null));
+        if (verified) {
+            loan = loanService.verifyLoan(loan.getId(), agreementId, scheduleId, "FAS-96-TEST");
+        }
+        return loan;
+    }
+
+    private Document document(String filename) {
+        Document document = new Document();
+        document.setFilename(filename);
+        document.setOriginalFilename(filename);
+        document.setContentType("application/pdf");
+        document.setFileSize(1024L);
+        document.setStoragePath("2026/10/" + filename);
+        document.setChecksumSha256("a".repeat(64));
+        document.setUploadedBy("finance");
+        return documentRepository.save(document);
     }
 
     private KurInstallment schedule(KurLoan loan, LocalDate due,

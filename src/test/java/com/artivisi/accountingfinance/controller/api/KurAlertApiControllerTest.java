@@ -2,6 +2,7 @@ package com.artivisi.accountingfinance.controller.api;
 
 import com.artivisi.accountingfinance.TestcontainersConfiguration;
 import com.artivisi.accountingfinance.entity.ChartOfAccount;
+import com.artivisi.accountingfinance.entity.Document;
 import com.artivisi.accountingfinance.entity.JournalEntry;
 import com.artivisi.accountingfinance.entity.JournalTemplate;
 import com.artivisi.accountingfinance.entity.KurLoan;
@@ -11,6 +12,7 @@ import com.artivisi.accountingfinance.enums.KurReserveEntryKind;
 import com.artivisi.accountingfinance.enums.KurScheduleSourceKind;
 import com.artivisi.accountingfinance.enums.TransactionStatus;
 import com.artivisi.accountingfinance.repository.ChartOfAccountRepository;
+import com.artivisi.accountingfinance.repository.DocumentRepository;
 import com.artivisi.accountingfinance.repository.JournalEntryRepository;
 import com.artivisi.accountingfinance.repository.JournalTemplateRepository;
 import com.artivisi.accountingfinance.repository.TransactionRepository;
@@ -74,6 +76,9 @@ class KurAlertApiControllerTest {
 
     @Autowired
     private ChartOfAccountRepository chartOfAccountRepository;
+
+    @Autowired
+    private DocumentRepository documentRepository;
 
     @Autowired
     private JournalTemplateRepository journalTemplateRepository;
@@ -267,12 +272,35 @@ class KurAlertApiControllerTest {
     }
 
     private KurLoan createLoan() {
-        return loanService.createLoan(new KurLoanService.CreateLoanCommand(
+        KurLoan loan = loanService.createLoan(new KurLoanService.CreateLoanCommand(
                 "BRI", "KUR", null, "FASTERNET", "Indra",
                 new BigDecimal("99270000.00"), LocalDate.of(2026, 10, 21), 36, INSTALLMENT,
                 "MONTHLY", 36, FIRST_DUE, 21, LocalDate.of(2029, 10, 21),
-                null, UUID.randomUUID(), UUID.randomUUID(),
-                KurLoanProvenance.VERIFIED, null));
+                null, null, null,
+                KurLoanProvenance.FOUNDER_ESTIMATE, null));
+
+        Document agreement = new Document();
+        agreement.setFilename("agreement.pdf");
+        agreement.setOriginalFilename("agreement.pdf");
+        agreement.setContentType("application/pdf");
+        agreement.setFileSize(1024L);
+        agreement.setStoragePath("2026/10/agreement.pdf");
+        agreement.setChecksumSha256("a".repeat(64));
+        agreement.setUploadedBy("dashboard");
+        agreement = documentRepository.save(agreement);
+
+        Document schedule = new Document();
+        schedule.setFilename("schedule.pdf");
+        schedule.setOriginalFilename("schedule.pdf");
+        schedule.setContentType("application/pdf");
+        schedule.setFileSize(1024L);
+        schedule.setStoragePath("2026/10/schedule.pdf");
+        schedule.setChecksumSha256("b".repeat(64));
+        schedule.setUploadedBy("dashboard");
+        schedule = documentRepository.save(schedule);
+
+        return loanService.verifyLoan(loan.getId(), agreement.getId(), schedule.getId(),
+                "FAS-96 test verification");
     }
 
     private void schedule(KurLoan loan) {
