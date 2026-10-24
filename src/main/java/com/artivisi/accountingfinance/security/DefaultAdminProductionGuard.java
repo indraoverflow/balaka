@@ -2,6 +2,7 @@ package com.artivisi.accountingfinance.security;
 
 import com.artivisi.accountingfinance.entity.User;
 import com.artivisi.accountingfinance.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.env.Environment;
@@ -12,6 +13,15 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Fails production startup when the database would expose a takeover path:
+ * the V001 seeded admin/admin account, or an empty user table with the
+ * first-run setup wizard disabled.
+ *
+ * Deployment bootstraps must replace the seeded admin before starting the
+ * production profile. The Ansible playbook runs migrations in a non-production
+ * bootstrap mode, swaps the admin, and only then starts the production service.
+ */
 @Component
 public class DefaultAdminProductionGuard implements ApplicationRunner {
 
@@ -23,13 +33,16 @@ public class DefaultAdminProductionGuard implements ApplicationRunner {
     private final Environment environment;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final boolean setupEnabled;
 
     public DefaultAdminProductionGuard(Environment environment,
                                        UserRepository userRepository,
-                                       PasswordEncoder passwordEncoder) {
+                                       PasswordEncoder passwordEncoder,
+                                       @Value("${app.setup.enabled:false}") boolean setupEnabled) {
         this.environment = environment;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.setupEnabled = setupEnabled;
     }
 
     @Override
@@ -46,7 +59,12 @@ public class DefaultAdminProductionGuard implements ApplicationRunner {
         if (seededOrDefault.isPresent()) {
             throw new IllegalStateException(
                     "Default admin/admin credentials are present in the production profile; "
-                            + "remove the seeded admin and create a unique operator account before starting");
+                            + "replace the seeded admin with a unique operator account before starting");
+        }
+        if (userRepository.count() == 0 && !setupEnabled) {
+            throw new IllegalStateException(
+                    "No users exist in the production profile and the first-run setup wizard is disabled; "
+                            + "create the initial administrator before starting");
         }
     }
 

@@ -29,7 +29,11 @@ class DefaultAdminProductionGuardTest {
     }
 
     private DefaultAdminProductionGuard guard(MockEnvironment environment) {
-        return new DefaultAdminProductionGuard(environment, userRepository, passwordEncoder);
+        return guard(environment, false);
+    }
+
+    private DefaultAdminProductionGuard guard(MockEnvironment environment, boolean setupEnabled) {
+        return new DefaultAdminProductionGuard(environment, userRepository, passwordEncoder, setupEnabled);
     }
 
     private static User admin(UUID id, String passwordHash) {
@@ -43,9 +47,23 @@ class DefaultAdminProductionGuardTest {
     @Test
     void rejectsSeededAdminByStableIdInProduction() {
         UUID id = DefaultAdminProductionGuard.SEEDED_ADMIN_ID;
-        when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin(id, "{bcrypt}changed")));
+        when(userRepository.findByUsername("admin"))
+                .thenReturn(Optional.of(admin(id, "{bcrypt}changed")));
 
-        var error = assertThrows(IllegalStateException.class, () -> guard(environment("production")).validate());
+        var error = assertThrows(IllegalStateException.class,
+                () -> guard(environment("production")).validate());
+
+        assertTrue(error.getMessage().contains("Default admin/admin"));
+    }
+
+    @Test
+    void rejectsSeededAdminEvenWhenSetupIsEnabled() {
+        UUID id = DefaultAdminProductionGuard.SEEDED_ADMIN_ID;
+        when(userRepository.findByUsername("admin"))
+                .thenReturn(Optional.of(admin(id, "{bcrypt}changed")));
+
+        var error = assertThrows(IllegalStateException.class,
+                () -> guard(environment("production"), true).validate());
 
         assertTrue(error.getMessage().contains("Default admin/admin"));
     }
@@ -56,14 +74,16 @@ class DefaultAdminProductionGuardTest {
         when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin(id, "$2a$10$whatever")));
         when(passwordEncoder.matches("admin", "$2a$10$whatever")).thenReturn(true);
 
-        var error = assertThrows(IllegalStateException.class, () -> guard(environment("production")).validate());
+        var error = assertThrows(IllegalStateException.class,
+                () -> guard(environment("production")).validate());
 
         assertTrue(error.getMessage().contains("Default admin/admin"));
     }
 
     @Test
-    void allowsProductionWhenNoAdminUserExists() {
+    void allowsProductionWhenConfiguredAdminExists() {
         when(userRepository.findByUsername("admin")).thenReturn(Optional.empty());
+        when(userRepository.count()).thenReturn(1L);
 
         assertDoesNotThrow(() -> guard(environment("production")).validate());
     }
@@ -73,8 +93,28 @@ class DefaultAdminProductionGuardTest {
         UUID id = UUID.randomUUID();
         when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin(id, "$2a$10$unique")));
         when(passwordEncoder.matches("admin", "$2a$10$unique")).thenReturn(false);
+        when(userRepository.count()).thenReturn(1L);
 
         assertDoesNotThrow(() -> guard(environment("production")).validate());
+    }
+
+    @Test
+    void rejectsEmptyUserTableWhenSetupIsDisabled() {
+        when(userRepository.findByUsername("admin")).thenReturn(Optional.empty());
+        when(userRepository.count()).thenReturn(0L);
+
+        var error = assertThrows(IllegalStateException.class,
+                () -> guard(environment("production"), false).validate());
+
+        assertTrue(error.getMessage().contains("No users exist"));
+    }
+
+    @Test
+    void allowsEmptyUserTableWhenSetupIsExplicitlyEnabled() {
+        when(userRepository.findByUsername("admin")).thenReturn(Optional.empty());
+        when(userRepository.count()).thenReturn(0L);
+
+        assertDoesNotThrow(() -> guard(environment("production"), true).validate());
     }
 
     @Test
@@ -82,5 +122,6 @@ class DefaultAdminProductionGuardTest {
         assertDoesNotThrow(() -> guard(environment("test")).validate());
 
         verify(userRepository, never()).findByUsername("admin");
+        verify(userRepository, never()).count();
     }
 }
