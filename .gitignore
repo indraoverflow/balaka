@@ -54,3 +54,9 @@ logs
 ### Python ###
 __pycache__/
 *.py[cod]
+
+# Local prod build artifacts / helpers (not part of source)
+balaka.jar
+balaka.log
+Dockerfile.prod
+docker-compose.prod.yml
