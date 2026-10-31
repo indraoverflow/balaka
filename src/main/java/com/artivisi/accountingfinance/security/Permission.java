@@ -188,6 +188,10 @@ public final class Permission {
     // finance duty, not a technical-administration duty.
     public static final String KUR_WRITE = "KUR_WRITE";
     public static final String KUR_VERIFY = "KUR_VERIFY";
+    // FAS-96: finance-owned alert-policy authority. Granted only to FINANCE_CONTROLLER
+    // (and OWNER for oversight); deliberately NOT granted to ADMIN, so the threshold
+    // policy stays a finance decision rather than a technical-administration one.
+    public static final String KUR_ALERT_CONFIG = "KUR_ALERT_CONFIG";
 
     // User Management (Admin only)
     public static final String USER_VIEW = "USER_VIEW";
@@ -275,7 +279,8 @@ public final class Permission {
                 SETTINGS_VIEW, SETTINGS_EDIT,
                 TELEGRAM_MANAGE,
                 AUDIT_LOG_VIEW,
-                OWN_PAYSLIP_VIEW, OWN_PROFILE_VIEW, OWN_PROFILE_EDIT
+                OWN_PAYSLIP_VIEW, OWN_PROFILE_VIEW, OWN_PROFILE_EDIT,
+                KUR_ALERT_CONFIG
             );
 
             case FINANCE_CONTROLLER -> Set.of(
@@ -284,7 +289,7 @@ public final class Permission {
                 ACCOUNT_VIEW,
                 JOURNAL_VIEW,
                 FISCAL_PERIOD_VIEW,
-                KUR_WRITE, KUR_VERIFY,
+                KUR_WRITE, KUR_VERIFY, KUR_ALERT_CONFIG,
                 AUDIT_LOG_VIEW,
                 OWN_PROFILE_VIEW, OWN_PROFILE_EDIT
             );

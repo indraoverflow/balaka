@@ -278,6 +278,11 @@ public class KurRepaymentAlertService {
                     "Reserve gap " + moneyString(gap) + " is at or above the approved orange cutoff "
                             + moneyString(orangeCutoff));
         }
+        if (cash == null) {
+            return Evaluation.unavailable("cash.actual",
+                    "Actual cash is unavailable, so payment readiness cannot be confirmed; "
+                            + "missing data is not treated as zero");
+        }
         if (cash != null) {
             BigDecimal cashAfterOutstanding = KurMoneyMath.money(cash)
                     .subtract(KurMoneyMath.money(obligation.outstanding()));
@@ -313,11 +318,6 @@ public class KurRepaymentAlertService {
             }
         }
 
-        if (cash == null) {
-            return Evaluation.unavailable("cash.actual",
-                    "Actual cash is unavailable, so payment readiness cannot be confirmed; "
-                            + "missing data is not treated as zero");
-        }
         if (!obligation.scheduleVerified()) {
             return Evaluation.of(KurAlertState.YELLOW,
                     "Reserve appears fully funded and actual cash covers the approved minimum, but the "

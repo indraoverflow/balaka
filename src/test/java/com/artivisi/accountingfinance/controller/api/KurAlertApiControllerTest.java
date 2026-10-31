@@ -148,7 +148,7 @@ class KurAlertApiControllerTest {
 
     @Test
     @WithMockUser(username = "finance",
-            authorities = {"SCOPE_analysis:read", "REPORT_VIEW", "SCOPE_kur-alert:write", "ALERT_CONFIG"})
+            authorities = {"SCOPE_analysis:read", "REPORT_VIEW", "SCOPE_kur-alert:write", "KUR_ALERT_CONFIG"})
     @DisplayName("recording an approved policy makes the alert evaluable")
     void putPolicyRecordsApprovalAndAlertUsesIt() throws Exception {
         KurLoan loan = createLoan();
@@ -187,7 +187,7 @@ class KurAlertApiControllerTest {
 
     @Test
     @WithMockUser(username = "finance",
-            authorities = {"SCOPE_kur-alert:write", "ALERT_CONFIG"})
+            authorities = {"SCOPE_kur-alert:write", "KUR_ALERT_CONFIG"})
     @DisplayName("a policy without an approval reference is rejected")
     void putPolicyWithoutApprovalReferenceIs400() throws Exception {
         KurLoan loan = createLoan();
@@ -268,6 +268,31 @@ class KurAlertApiControllerTest {
     @DisplayName("token without analysis:read is 403")
     void missingReportViewIs403() throws Exception {
         mockMvc.perform(get("/api/fasternet/v1/kur/alert"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "admin-legacy",
+            authorities = {"SCOPE_kur-alert:write", "ALERT_CONFIG"})
+    @DisplayName("holding the legacy ALERT_CONFIG alone no longer grants policy write (finance-owned)")
+    void legacyAlertConfigAloneIs403() throws Exception {
+        KurLoan loan = createLoan();
+
+        mockMvc.perform(put("/api/fasternet/v1/kur/alert-policy")
+                        .param("loanId", loan.getId().toString())
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "minimumCash": "0.00",
+                                  "targetReserve": "2757500.00",
+                                  "fundingPaceTolerancePercent": "0.00",
+                                  "orangeShortfall": "2000000.00",
+                                  "redShortfall": "2500000.00",
+                                  "approvalReference": "FAS-96-TEST",
+                                  "approvedBy": "CEO + Finance Controller"
+                                }
+                                """))
                 .andExpect(status().isForbidden());
     }
 

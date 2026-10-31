@@ -2,8 +2,10 @@ package com.artivisi.accountingfinance.service.fasternet;
 
 import com.artivisi.accountingfinance.entity.KurAlertPolicy;
 import com.artivisi.accountingfinance.entity.KurLoan;
+import com.artivisi.accountingfinance.enums.AuditEventType;
 import com.artivisi.accountingfinance.repository.KurAlertPolicyRepository;
 import com.artivisi.accountingfinance.repository.KurLoanRepository;
+import com.artivisi.accountingfinance.service.SecurityAuditService;
 import com.artivisi.accountingfinance.util.KurMoneyMath;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,7 @@ public class KurAlertPolicyService {
 
     private final KurAlertPolicyRepository policyRepository;
     private final KurLoanRepository loanRepository;
+    private final SecurityAuditService securityAuditService;
 
     public record PolicyCommand(
             BigDecimal minimumCash,
@@ -67,6 +70,8 @@ public class KurAlertPolicyService {
             throw new IllegalArgumentException("redShortfall must be greater than orangeShortfall");
         }
 
+        Optional<KurAlertPolicy> existingForAudit = policyRepository.findByLoanId(loanId);
+        String oldSummary = existingForAudit.map(this::policySummary).orElse("unconfigured");
         KurAlertPolicy policy = policyRepository.findByLoanId(loanId).orElseGet(() -> {
             KurAlertPolicy created = new KurAlertPolicy();
             created.setLoan(loan);
@@ -93,7 +98,31 @@ public class KurAlertPolicyService {
         policy.setApprovalReference(approvalReference);
         policy.setApprovedBy(approvedBy);
         policy.setApprovedAt(LocalDateTime.now());
-        return policyRepository.save(policy);
+        KurAlertPolicy saved = policyRepository.save(policy);
+        audit(loanId, oldSummary, policySummary(saved), approvalReference, approvedBy);
+        return saved;
+    }
+
+    private String policySummary(KurAlertPolicy policy) {
+        if (policy == null || !policy.isConfigured()) {
+            return "unconfigured";
+        }
+        return "minimumCash=" + policy.getMinimumCash().toPlainString()
+                + ", targetReserve=" + policy.getTargetReserve().toPlainString()
+                + ", fundingPaceTolerancePercent=" + policy.getFundingPaceTolerancePercent().toPlainString()
+                + ", orangeShortfall=" + policy.getOrangeShortfall().toPlainString()
+                + ", redShortfall=" + policy.getRedShortfall().toPlainString()
+                + ", approvalReference=" + policy.getApprovalReference()
+                + ", approvedBy=" + policy.getApprovedBy();
+    }
+
+    private void audit(UUID loanId, String oldSummary, String newSummary, String approvalReference, String approvedBy) {
+        securityAuditService.log(AuditEventType.KUR_ALERT_POLICY_SAVE,
+                "KUR alert policy saved: loanId=" + loanId
+                        + ", old=[" + oldSummary + "]"
+                        + ", new=[" + newSummary + "]"
+                        + ", approvalReference=" + approvalReference
+                        + ", approvedBy=" + approvedBy);
     }
 
     private static void requireCompletePolicy(PolicyCommand command) {

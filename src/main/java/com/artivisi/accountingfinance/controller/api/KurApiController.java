@@ -163,7 +163,7 @@ public class KurApiController {
     }
 
     @PutMapping("/alert-policy")
-    @PreAuthorize("hasAuthority('SCOPE_kur-alert:write') and hasAuthority('ALERT_CONFIG')")
+    @PreAuthorize("hasAuthority('SCOPE_kur-alert:write') and hasAuthority('KUR_ALERT_CONFIG')")
     @Operation(summary = "Record the approved KUR repayment alert thresholds",
             description = "Requires an approval reference and approvedBy. There are no defaults: the policy "
                     + "is stored only when every threshold and the approval evidence are supplied together.")
@@ -171,7 +171,7 @@ public class KurApiController {
     @ApiResponse(responseCode = "400", description = "Incomplete or invalid policy, or invalid loanId")
     @ApiResponse(responseCode = "404", description = "No KUR loan")
     @ApiResponse(responseCode = "401", description = "Missing or invalid credentials")
-    @ApiResponse(responseCode = "403", description = "Token lacks kur-alert:write and ALERT_CONFIG")
+    @ApiResponse(responseCode = "403", description = "Token lacks kur-alert:write and KUR_ALERT_CONFIG")
     @ApiResponse(responseCode = "503", description = "Ledger database unavailable")
     public ResponseEntity<?> saveAlertPolicy(
             @RequestParam(name = "loanId", required = false) String loanId,

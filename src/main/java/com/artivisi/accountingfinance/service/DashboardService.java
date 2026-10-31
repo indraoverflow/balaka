@@ -67,8 +67,10 @@ public class DashboardService {
 
         // Calculate balances as of end of current month
         BigDecimal cashBalance = calculateCashBalance(endDate);
-        BigDecimal receivablesBalance = calculateAccountBalanceByEntity(
-                companyConfigService.requireReceivableAccount(), endDate);
+        BigDecimal receivablesBalance = BigDecimal.ZERO;
+        for (ChartOfAccount receivableAccount : chartOfAccountRepository.findReceivableAccountsByName()) {
+            receivablesBalance = receivablesBalance.add(calculateAccountBalanceByEntity(receivableAccount, endDate));
+        }
         BigDecimal payablesBalance = calculateAccountBalanceByEntity(
                 companyConfigService.requirePayableAccount(), endDate);
 

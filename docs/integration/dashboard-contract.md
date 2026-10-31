@@ -390,10 +390,15 @@ projected-shortfall test or the 90-day runway condition. Therefore:
 
 **Threshold policy.** Values are stored by
 `PUT /api/fasternet/v1/kur/alert-policy?loanId=...` (scope `kur-alert:write` plus
-`ALERT_CONFIG`). All five thresholds and the approval evidence must be supplied
+`KUR_ALERT_CONFIG`). All five thresholds and the approval evidence must be supplied
 together; there are no defaults and no partial policies. `approvalReference` records
 the CEO + Finance Controller decision. Until a complete policy exists, the read API
 returns `unconfigured`, `policy.status: "unconfigured"` and `null` thresholds.
+
+Each successful policy write is recorded in the security audit log as
+`KUR_ALERT_POLICY_SAVE` with the actor, loan id, old and new threshold values, and
+the approval reference. An unchanged replay performs no write and emits no audit
+event; a rejected or partial write emits no policy row.
 
 **Separation of states.** `shortfall.status` and `cash.status` use the §0.4 figure
 statuses. `obligation.scheduleStatus` is `verified` only for a `verified`/`bank-confirmed`

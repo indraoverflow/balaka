@@ -72,6 +72,7 @@ public class UserService {
 
         // Encode password
         user.setPassword(passwordEncoder.encode(user.getPassword()));
+        user.setPasswordLastChanged(java.time.LocalDateTime.now());
 
         // Set roles
         String currentUser = getCurrentUsername();
@@ -143,6 +144,7 @@ public class UserService {
         requireFinanceAuthorityForFinanceAccount(user, "change the password of");
 
         user.setPassword(passwordEncoder.encode(newPassword));
+        user.setPasswordLastChanged(java.time.LocalDateTime.now());
         userRepository.save(user);
         log.info("Changed password for user: {}", LogSanitizer.username(user.getUsername()));
     }

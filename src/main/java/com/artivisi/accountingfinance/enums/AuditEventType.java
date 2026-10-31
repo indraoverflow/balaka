@@ -51,5 +51,7 @@ public enum AuditEventType {
     KUR_RESERVE_RECORD,
     KUR_LOAN_VERIFY,
     // Supporting-document attachment (FAS-105)
-    KUR_DOCUMENT_UPLOAD
+    KUR_DOCUMENT_UPLOAD,
+    // FAS-96: KUR repayment alert threshold policy write
+    KUR_ALERT_POLICY_SAVE
 }

@@ -80,7 +80,7 @@ public enum ApiScope {
             Permission.KUR_VERIFY),
     KUR_ALERT_WRITE("kur-alert:write",
             "Record the CEO + Finance Controller-approved thresholds for the KUR repayment alert (FAS-96)",
-            Permission.ALERT_CONFIG);
+            Permission.KUR_ALERT_CONFIG);
 
     private static final Map<String, ApiScope> BY_NAME = Arrays.stream(values())
             .collect(Collectors.toUnmodifiableMap(ApiScope::scope, Function.identity()));
