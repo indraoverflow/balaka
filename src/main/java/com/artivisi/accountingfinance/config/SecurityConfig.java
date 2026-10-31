@@ -71,7 +71,8 @@ public class SecurityConfig {
                     // Container/platform health probes. Only the health group is
                     // exposed and show-details is never, so this returns status only.
                     .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                    .requestMatchers("/device/**").permitAll();
+                    .requestMatchers("/device/**").permitAll()
+                    .requestMatchers("/settings/company/logo").permitAll();  // Allow logo on login page
 
                 // API endpoints require Bearer token authentication (handled by filter)
                 // No need for special handling here - filter sets authentication
