@@ -4,6 +4,7 @@ import com.artivisi.accountingfinance.enums.KurInstallmentStatus;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 
 /**
  * Decimal-safe KUR money and reserve math.
@@ -100,5 +101,133 @@ public final class KurMoneyMath {
 
     public static boolean isPaid(KurInstallmentStatus status) {
         return status == KurInstallmentStatus.PAID || status == KurInstallmentStatus.OVERPAID;
+    }
+
+    public static final BigDecimal ESTIMATE_PRINCIPAL = new BigDecimal("2757500.00");
+    public static final BigDecimal ESTIMATE_INTEREST = new BigDecimal("292500.00");
+    public static final BigDecimal ESTIMATE_INSTALLMENT = new BigDecimal("3050000.00");
+
+    public record InstallmentSplit(
+            BigDecimal principal,
+            BigDecimal interest,
+            BigDecimal fee,
+            BigDecimal overpayment,
+            BigDecimal netInstallmentPaid
+    ) {}
+
+    /**
+     * Splits an installment payment according to the approved waterfall:
+     * Fee -> Interest -> Principal -> Overpayment (excess goes to 1.1.11 buffer).
+     */
+    public static InstallmentSplit splitInstallment(
+            BigDecimal paymentAmount,
+            BigDecimal scheduledPrincipal,
+            BigDecimal scheduledInterest,
+            BigDecimal scheduledFee) {
+        BigDecimal paid = nonNullMoney(paymentAmount);
+        BigDecimal targetFee = nonNullMoney(scheduledFee);
+        BigDecimal targetInterest = nonNullMoney(scheduledInterest);
+        BigDecimal targetPrincipal = nonNullMoney(scheduledPrincipal);
+
+        BigDecimal feePaid = paid.min(targetFee);
+        BigDecimal rem1 = paid.subtract(feePaid);
+
+        BigDecimal interestPaid = rem1.min(targetInterest);
+        BigDecimal rem2 = rem1.subtract(interestPaid);
+
+        BigDecimal principalPaid = rem2.min(targetPrincipal);
+        BigDecimal overpayment = rem2.subtract(principalPaid);
+
+        BigDecimal netPaid = feePaid.add(interestPaid).add(principalPaid);
+
+        return new InstallmentSplit(
+                money(principalPaid),
+                money(interestPaid),
+                money(feePaid),
+                money(overpayment),
+                money(netPaid)
+        );
+    }
+
+    public static InstallmentSplit splitInstallmentEstimateFallback(BigDecimal paymentAmount) {
+        return splitInstallment(paymentAmount, ESTIMATE_PRINCIPAL, ESTIMATE_INTEREST, ZERO);
+    }
+
+    public record ReclassResult(
+            BigDecimal currentRequired,
+            BigDecimal nonCurrentRequired,
+            BigDecimal delta
+    ) {}
+
+    /**
+     * Calculates the month-end current/non-current principal reclassification.
+     * Evaluates a rolling 12-month horizon: current portion = min(remaining, sum of next 12 months).
+     * Non-current portion = max(0, remaining - current portion).
+     * Near maturity (months 25-36, <= 12 months remaining), non-current is strictly zero.
+     */
+    public static ReclassResult calculateReclass(
+            BigDecimal remainingTotalPrincipal,
+            List<BigDecimal> upcoming12MonthsPrincipals,
+            BigDecimal currentGlBalance) {
+        BigDecimal rem = nonNullMoney(remainingTotalPrincipal);
+        BigDecimal sumUpcoming = ZERO;
+        if (upcoming12MonthsPrincipals != null) {
+            for (BigDecimal p : upcoming12MonthsPrincipals) {
+                if (p != null) {
+                    sumUpcoming = sumUpcoming.add(money(p));
+                }
+            }
+        }
+        BigDecimal currentReq = rem.min(sumUpcoming);
+        BigDecimal nonCurrentReq = rem.subtract(currentReq).max(ZERO);
+        BigDecimal delta = currentReq.subtract(nonNullMoney(currentGlBalance));
+
+        return new ReclassResult(
+                money(currentReq),
+                money(nonCurrentReq),
+                money(delta)
+        );
+    }
+
+    public record ThreeWayReconciliationResult(
+            BigDecimal legAPrincipalDifference,
+            BigDecimal legBCashDifference,
+            BigDecimal legCComponentDifference,
+            BigDecimal unexplainedDifference,
+            boolean isClean,
+            boolean isRedException
+    ) {}
+
+    /**
+     * Performs three-way reconciliation (triangulation):
+     * Leg A: Outstanding Principal (GL 2.1.30 + 2.2.01 vs Bank reported). Tolerance <= 1.00.
+     * Leg B: Cash Outflow (GL 1.1.10 credit vs Bank statement debit). Tolerance = 0.
+     * Leg C: Component Split (GL components sum vs Schedule row amount). Tolerance = 0.
+     */
+    public static ThreeWayReconciliationResult reconcileThreeWay(
+            BigDecimal glCurrentPrincipal,
+            BigDecimal glNonCurrentPrincipal,
+            BigDecimal bankReportedPrincipal,
+            BigDecimal glCashCredit,
+            BigDecimal bankCashDebit,
+            BigDecimal glComponentsSum,
+            BigDecimal scheduleInstallment) {
+        BigDecimal glTotalPrincipal = nonNullMoney(glCurrentPrincipal).add(nonNullMoney(glNonCurrentPrincipal));
+        BigDecimal legA = glTotalPrincipal.subtract(nonNullMoney(bankReportedPrincipal)).abs();
+        BigDecimal legB = nonNullMoney(glCashCredit).subtract(nonNullMoney(bankCashDebit)).abs();
+        BigDecimal legC = nonNullMoney(glComponentsSum).subtract(nonNullMoney(scheduleInstallment)).abs();
+
+        BigDecimal unexplained = legA.add(legB).add(legC);
+        boolean clean = unexplained.compareTo(ZERO) == 0;
+        boolean red = legA.compareTo(new BigDecimal("1.00")) > 0 || legB.compareTo(ZERO) > 0 || legC.compareTo(ZERO) > 0;
+
+        return new ThreeWayReconciliationResult(
+                money(legA),
+                money(legB),
+                money(legC),
+                money(unexplained),
+                clean,
+                red
+        );
     }
 }

@@ -747,10 +747,10 @@ public class KurLoanService {
         BigDecimal separate = bucket(entries, false);
         boolean reserveConfigured = !entries.isEmpty();
         figures.put("reserve.earmarked", reserveConfigured
-                ? new KurReserveResponse.Figure(moneyString(earmarked), "posted")
+                ? new KurReserveResponse.Figure(moneyString(earmarked), "recorded")
                 : new KurReserveResponse.Figure(null, "unavailable"));
         figures.put("reserve.separateAccount", reserveConfigured
-                ? new KurReserveResponse.Figure(moneyString(separate), "posted")
+                ? new KurReserveResponse.Figure(moneyString(separate), "recorded")
                 : new KurReserveResponse.Figure(null, "unavailable"));
         if (!reserveConfigured) {
             missing.add(new KurReserveResponse.Missing(
@@ -790,7 +790,7 @@ public class KurLoanService {
 
         if (nextDue != null && reserveConfigured) {
             figures.put("reserve.gap", new KurReserveResponse.Figure(
-                    moneyString(KurMoneyMath.reserveGap(nextDue.outstanding(), earmarked, separate)), "posted"));
+                    moneyString(KurMoneyMath.reserveGap(nextDue.outstanding(), earmarked, separate)), "recorded"));
         } else {
             figures.put("reserve.gap", new KurReserveResponse.Figure(null, "unavailable"));
             missing.add(new KurReserveResponse.Missing(

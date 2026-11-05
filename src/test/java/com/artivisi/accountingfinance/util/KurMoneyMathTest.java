@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -156,5 +157,125 @@ class KurMoneyMathTest {
                 .isEqualByComparingTo("2757500.00");
         assertThat(KurMoneyMath.money(new BigDecimal("0.004")))
                 .isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("split installment exact: principal, interest, fee match schedule with 0 overpayment")
+    void splitInstallmentExact() {
+        KurMoneyMath.InstallmentSplit split = KurMoneyMath.splitInstallment(
+                new BigDecimal("3050000.00"),
+                new BigDecimal("2757500.00"),
+                new BigDecimal("292500.00"),
+                BigDecimal.ZERO);
+
+        assertThat(split.principal()).isEqualByComparingTo("2757500.00");
+        assertThat(split.interest()).isEqualByComparingTo("292500.00");
+        assertThat(split.fee()).isEqualByComparingTo("0.00");
+        assertThat(split.overpayment()).isEqualByComparingTo("0.00");
+        assertThat(split.netInstallmentPaid()).isEqualByComparingTo("3050000.00");
+    }
+
+    @Test
+    @DisplayName("split installment partial waterfall: fee -> interest -> principal")
+    void splitInstallmentPartialWaterfall() {
+        // Payment of 1,000,000 against scheduled fee 10,000, interest 292,500, principal 2,757,500
+        KurMoneyMath.InstallmentSplit split = KurMoneyMath.splitInstallment(
+                new BigDecimal("1000000.00"),
+                new BigDecimal("2757500.00"),
+                new BigDecimal("292500.00"),
+                new BigDecimal("10000.00"));
+
+        assertThat(split.fee()).isEqualByComparingTo("10000.00");
+        assertThat(split.interest()).isEqualByComparingTo("292500.00");
+        assertThat(split.principal()).isEqualByComparingTo("697500.00");
+        assertThat(split.overpayment()).isEqualByComparingTo("0.00");
+        assertThat(split.netInstallmentPaid()).isEqualByComparingTo("1000000.00");
+    }
+
+    @Test
+    @DisplayName("split installment overpayment: excess posts to overpayment buffer, not principal")
+    void splitInstallmentOverpayment() {
+        KurMoneyMath.InstallmentSplit split = KurMoneyMath.splitInstallment(
+                new BigDecimal("4000000.00"),
+                new BigDecimal("2757500.00"),
+                new BigDecimal("292500.00"),
+                BigDecimal.ZERO);
+
+        assertThat(split.principal()).isEqualByComparingTo("2757500.00");
+        assertThat(split.interest()).isEqualByComparingTo("292500.00");
+        assertThat(split.fee()).isEqualByComparingTo("0.00");
+        assertThat(split.overpayment()).isEqualByComparingTo("950000.00");
+        assertThat(split.netInstallmentPaid()).isEqualByComparingTo("3050000.00");
+    }
+
+    @Test
+    @DisplayName("split installment estimate fallback: uses straight-line 2,757,500 / 292,500")
+    void splitInstallmentEstimateFallback() {
+        KurMoneyMath.InstallmentSplit split = KurMoneyMath.splitInstallmentEstimateFallback(
+                new BigDecimal("3050000.00"));
+
+        assertThat(split.principal()).isEqualByComparingTo("2757500.00");
+        assertThat(split.interest()).isEqualByComparingTo("292500.00");
+        assertThat(split.overpayment()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("current/non-current reclass rolling 12-month horizon and zero non-current near maturity")
+    void reclassRolling12MonthsAndTerminalBoundary() {
+        // Month 1: remaining principal 99,270,000, next 12 months sum 33,090,000, GL current balance 33,090,000
+        List<BigDecimal> next12 = List.of(
+                new BigDecimal("2757500.00"), new BigDecimal("2757500.00"),
+                new BigDecimal("2757500.00"), new BigDecimal("2757500.00"),
+                new BigDecimal("2757500.00"), new BigDecimal("2757500.00"),
+                new BigDecimal("2757500.00"), new BigDecimal("2757500.00"),
+                new BigDecimal("2757500.00"), new BigDecimal("2757500.00"),
+                new BigDecimal("2757500.00"), new BigDecimal("2757500.00")
+        );
+        KurMoneyMath.ReclassResult res1 = KurMoneyMath.calculateReclass(
+                new BigDecimal("99270000.00"), next12, new BigDecimal("33090000.00"));
+
+        assertThat(res1.currentRequired()).isEqualByComparingTo("33090000.00");
+        assertThat(res1.nonCurrentRequired()).isEqualByComparingTo("66180000.00");
+        assertThat(res1.delta()).isEqualByComparingTo("0.00");
+
+        // Near maturity (month 25-36): remaining principal 30,000,000, next 12 months sum 33,090,000
+        KurMoneyMath.ReclassResult resNearMaturity = KurMoneyMath.calculateReclass(
+                new BigDecimal("30000000.00"), next12, new BigDecimal("27575000.00"));
+
+        assertThat(resNearMaturity.currentRequired()).isEqualByComparingTo("30000000.00");
+        assertThat(resNearMaturity.nonCurrentRequired()).isEqualByComparingTo("0.00");
+        assertThat(resNearMaturity.delta()).isEqualByComparingTo("2425000.00");
+    }
+
+    @Test
+    @DisplayName("three-way reconciliation: clean fixture vs red control exception on cash difference")
+    void threeWayReconciliation() {
+        // Clean
+        KurMoneyMath.ThreeWayReconciliationResult clean = KurMoneyMath.reconcileThreeWay(
+                new BigDecimal("33090000.00"),
+                new BigDecimal("66180000.00"),
+                new BigDecimal("99270000.00"),
+                new BigDecimal("3050000.00"),
+                new BigDecimal("3050000.00"),
+                new BigDecimal("3050000.00"),
+                new BigDecimal("3050000.00"));
+
+        assertThat(clean.isClean()).isTrue();
+        assertThat(clean.isRedException()).isFalse();
+        assertThat(clean.unexplainedDifference()).isEqualByComparingTo("0.00");
+
+        // Cash mismatch (Leg B != 0) -> RED exception
+        KurMoneyMath.ThreeWayReconciliationResult cashMismatch = KurMoneyMath.reconcileThreeWay(
+                new BigDecimal("33090000.00"),
+                new BigDecimal("66180000.00"),
+                new BigDecimal("99270000.00"),
+                new BigDecimal("3050000.00"),
+                new BigDecimal("3040000.00"), // 10,000 bank diff
+                new BigDecimal("3050000.00"),
+                new BigDecimal("3050000.00"));
+
+        assertThat(cashMismatch.isClean()).isFalse();
+        assertThat(cashMismatch.isRedException()).isTrue();
+        assertThat(cashMismatch.legBCashDifference()).isEqualByComparingTo("10000.00");
     }
 }
