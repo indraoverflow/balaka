@@ -153,6 +153,33 @@ public final class KurMoneyMath {
         return splitInstallment(paymentAmount, ESTIMATE_PRINCIPAL, ESTIMATE_INTEREST, ZERO);
     }
 
+    /**
+     * Scheduled principal/interest/fee for one installment, resolved the same way for
+     * posting and for reconciliation. A lender-provided split always wins; a missing
+     * split falls back to the approved founder estimate when the installment amount
+     * matches it, otherwise to the whole amount as principal. {@code estimated} marks
+     * the fallback so callers can carry the provenance into the posting/report.
+     */
+    public record ScheduledComponents(
+            BigDecimal principal,
+            BigDecimal interest,
+            BigDecimal fee,
+            boolean estimated
+    ) {}
+
+    public static ScheduledComponents scheduleComponents(
+            BigDecimal installmentAmount, BigDecimal principal, BigDecimal interest, BigDecimal fee) {
+        BigDecimal feeValue = nonNullMoney(fee);
+        if (principal != null && principal.signum() > 0 && interest != null) {
+            return new ScheduledComponents(money(principal), money(interest), feeValue, false);
+        }
+        BigDecimal amount = nonNullMoney(installmentAmount);
+        if (amount.compareTo(ESTIMATE_INSTALLMENT) == 0) {
+            return new ScheduledComponents(ESTIMATE_PRINCIPAL, ESTIMATE_INTEREST, feeValue, true);
+        }
+        return new ScheduledComponents(amount, ZERO, feeValue, true);
+    }
+
     public record ReclassResult(
             BigDecimal currentRequired,
             BigDecimal nonCurrentRequired,

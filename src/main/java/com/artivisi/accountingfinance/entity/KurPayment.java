@@ -57,6 +57,13 @@ public class KurPayment extends TimestampedEntity {
     @Column(name = "reversal_reason", length = 300)
     private String reversalReason;
 
+    /**
+     * FAS-139: the posted ledger transaction for this payment, so a tracker reversal
+     * can be paired with the ledger reversal of exactly this journal.
+     */
+    @Column(name = "journal_transaction_id")
+    private java.util.UUID journalTransactionId;
+
     public boolean isReversed() {
         return reversedAt != null;
     }

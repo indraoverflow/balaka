@@ -7,6 +7,7 @@ import com.artivisi.accountingfinance.entity.KurLoan;
 import com.artivisi.accountingfinance.entity.KurPayment;
 import com.artivisi.accountingfinance.entity.KurReserveEntry;
 import com.artivisi.accountingfinance.enums.KurLoanProvenance;
+import com.artivisi.accountingfinance.enums.KurLegalBorrowerStructure;
 import com.artivisi.accountingfinance.enums.KurReserveEntryKind;
 import com.artivisi.accountingfinance.enums.KurScheduleSourceKind;
 import com.artivisi.accountingfinance.exception.KurResourceNotFoundException;
@@ -152,6 +153,29 @@ public class KurWriteApiController {
         KurLoan loan = kurLoanService.verifyLoan(
                 loanId, request.agreementDocumentId(), request.scheduleDocumentId(), request.reason());
         log.info("FASTERNET KUR: loan verified id={}", loan.getId());
+        return ResponseEntity.ok(LoanResponse.from(loan));
+    }
+
+    // ------------------------------------------------------------------
+    // Legal-borrower structure (FAS-139 / FAS-97 §13)
+    // ------------------------------------------------------------------
+
+    @PostMapping("/loans/{loanId}/legal-structure")
+    @PreAuthorize("hasAuthority('SCOPE_kur:verify') and hasAuthority('" + Permission.KUR_VERIFY + "')")
+    @Operation(summary = "Set the legal-borrower attribution structure (A/B/C/D)",
+            description = "Finance Controller only. Only STRUCTURE_A permits GL posting; the default is "
+                    + "STRUCTURE_D (MOU unsigned or silent), which keeps the loan on the tracker only. "
+                    + "The change is recorded in the security audit.")
+    @ApiResponse(responseCode = "200", description = "Structure recorded")
+    @ApiResponse(responseCode = "400", description = "Missing or unknown structure")
+    @ApiResponse(responseCode = "401", description = "Missing or invalid credentials")
+    @ApiResponse(responseCode = "403", description = "Token lacks KUR_VERIFY")
+    @ApiResponse(responseCode = "404", description = "Loan not found")
+    public ResponseEntity<LoanResponse> setLegalBorrowerStructure(
+            @PathVariable UUID loanId,
+            @Valid @RequestBody LegalStructureRequest request) {
+        KurLoan loan = kurLoanService.setLegalBorrowerStructure(loanId, request.structure());
+        log.info("FASTERNET KUR: legal structure set loan={} structure={}", loanId, request.structure());
         return ResponseEntity.ok(LoanResponse.from(loan));
     }
 
@@ -372,6 +396,11 @@ public class KurWriteApiController {
     ) {
     }
 
+    public record LegalStructureRequest(
+            @NotNull KurLegalBorrowerStructure structure
+    ) {
+    }
+
     public record ScheduleRowRequest(
             @NotNull @Min(1) Integer installmentNumber,
             @NotNull LocalDate dueDate,
@@ -427,7 +456,8 @@ public class KurWriteApiController {
             UUID agreementDocumentId,
             UUID scheduleDocumentId,
             String provenance,
-            String status
+            String status,
+            String legalBorrowerStructure
     ) {
         public static LoanResponse from(KurLoan loan) {
             return new LoanResponse(
@@ -446,7 +476,9 @@ public class KurWriteApiController {
                     loan.getAgreementDocumentId(),
                     loan.getScheduleDocumentId(),
                     loan.getProvenance().getJsonValue(),
-                    loan.getStatus().name());
+                    loan.getStatus().name(),
+                    loan.getLegalBorrowerStructure() == null
+                            ? null : loan.getLegalBorrowerStructure().name());
         }
     }
 

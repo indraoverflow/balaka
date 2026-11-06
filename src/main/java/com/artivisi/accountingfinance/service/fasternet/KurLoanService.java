@@ -10,6 +10,7 @@ import com.artivisi.accountingfinance.entity.KurPayment;
 import com.artivisi.accountingfinance.entity.KurReserveEntry;
 import com.artivisi.accountingfinance.enums.AuditEventType;
 import com.artivisi.accountingfinance.enums.KurInstallmentStatus;
+import com.artivisi.accountingfinance.enums.KurLegalBorrowerStructure;
 import com.artivisi.accountingfinance.enums.KurLoanProvenance;
 import com.artivisi.accountingfinance.enums.KurReserveEntryKind;
 import com.artivisi.accountingfinance.enums.KurScheduleSourceKind;
@@ -410,6 +411,28 @@ public class KurLoanService {
             throw new IllegalArgumentException("Payment does not belong to loan " + loanId);
         }
         return reversePayment(paymentId, reason);
+    }
+
+    /**
+     * FAS-139 / FAS-97 §13: sets the legal-borrower attribution of a loan. Only
+     * {@code STRUCTURE_A} permits GL posting; the default is {@code STRUCTURE_D}
+     * ("MOU unsigned or silent"), which keeps the loan on the tracker only.
+     */
+    @Transactional
+    public KurLoan setLegalBorrowerStructure(UUID loanId, KurLegalBorrowerStructure structure) {
+        Objects.requireNonNull(structure, "structure");
+        KurLoan loan = requireLoan(loanId);
+        KurLegalBorrowerStructure before = loan.getLegalBorrowerStructure();
+        if (before == structure) {
+            return loan;
+        }
+        loan.setLegalBorrowerStructure(structure);
+        KurLoan saved = loanRepository.save(loan);
+        audit(AuditEventType.KUR_LEGAL_STRUCTURE_SET,
+                "KUR legal borrower structure: loanId=" + loanId
+                        + ", from=" + before + ", to=" + structure
+                        + ", postingAllowed=" + structure.isPostingAllowed());
+        return saved;
     }
 
     @Transactional

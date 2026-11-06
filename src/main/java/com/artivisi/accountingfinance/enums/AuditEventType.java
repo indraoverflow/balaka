@@ -53,5 +53,12 @@ public enum AuditEventType {
     // Supporting-document attachment (FAS-105)
     KUR_DOCUMENT_UPLOAD,
     // FAS-96: KUR repayment alert threshold policy write
-    KUR_ALERT_POLICY_SAVE
+    KUR_ALERT_POLICY_SAVE,
+    // FAS-139 / FAS-97: KUR accounting postings and paired reversal
+    KUR_POSTING_DISBURSEMENT,
+    KUR_POSTING_INSTALLMENT,
+    KUR_POSTING_RECLASS,
+    KUR_POSTING_ACCRUAL,
+    KUR_PAIRED_REVERSAL,
+    KUR_LEGAL_STRUCTURE_SET
 }

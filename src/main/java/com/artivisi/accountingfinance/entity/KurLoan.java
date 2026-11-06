@@ -1,5 +1,6 @@
 package com.artivisi.accountingfinance.entity;
 
+import com.artivisi.accountingfinance.enums.KurLegalBorrowerStructure;
 import com.artivisi.accountingfinance.enums.KurLoanProvenance;
 import com.artivisi.accountingfinance.enums.KurLoanStatus;
 import com.artivisi.accountingfinance.security.EncryptedStringConverter;
@@ -99,6 +100,14 @@ public class KurLoan extends TimestampedEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "provenance", nullable = false, length = 30)
     private KurLoanProvenance provenance = KurLoanProvenance.FOUNDER_ESTIMATE;
+
+    /**
+     * FAS-139 / FAS-97 §13: legal-borrower attribution. Defaults to STRUCTURE_D
+     * ("MOU unsigned or silent") which permits no GL posting at all.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "legal_borrower_structure", length = 30)
+    private KurLegalBorrowerStructure legalBorrowerStructure = KurLegalBorrowerStructure.STRUCTURE_D;
 
     @Column(name = "notes", columnDefinition = "TEXT")
     private String notes;
