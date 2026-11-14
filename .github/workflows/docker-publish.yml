@@ -57,12 +57,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Docker Hub
-        if: steps.fork.outputs.is_fork == 'false'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # No Docker Hub login. `artivisi/balaka` belongs to the upstream project, so a fork can
+      # never push there, and a failing second push kills the whole buildx step after the image
+      # was already built. GHCR is the only registry this repository publishes to.
 
       - name: Extract metadata
         id: meta
@@ -70,7 +67,6 @@ jobs:
         with:
           images: |
             ghcr.io/${{ github.repository_owner }}/balaka
-            artivisi/balaka
           # Tag matrix:
           #   Push to main           → :main, :main-<sha>
           #   Pull request           → :pr-<number>
